@@ -29,6 +29,8 @@ python -m src.datasets                               # build caches, verify spli
 python -m src.train --model gcn --dataset bbbp --seed 0   # one run
 python -m src.run_all                                # all 24 runs
 python -m src.ensemble                               # combine predictions
+python -m src.reward                                 # reward terms + frozen classifier
+python -m src.grpo                                   # GRPO advantage + clipped loss
 jupyter lab notebooks/results.ipynb                  # tables and figures
 ```
 
@@ -47,6 +49,10 @@ overhead makes it slower. `--device mps` is available to test that.
 | `src/evaluate.py` | metrics; threshold chosen on validation only |
 | `src/run_all.py` | 4 models × 2 datasets × 3 seeds |
 | `src/ensemble.py` | soft vote, rank average, logistic stacking |
+| `src/models_edge.py` | edge-aware operators: `gine`, `gat_edge`, `sage_edge` |
+| `src/train_edge.py` | edge ablation runs; writes `results/edge_ablation/` |
+| `src/reward.py` | frozen-classifier reward for generation (Eq. 5–7) |
+| `src/grpo.py` | group-relative advantage and clipped surrogate (Eq. 6–7) |
 | `notebooks/results.ipynb` | EDA, results tables, ROC/PR curves |
 
 Results land in `results/<dataset>/<model>/seed<N>/`, aggregated into
@@ -81,13 +87,88 @@ four share an identical fold.
 **Bond features are computed but unused.** `Data.edge_attr` carries bond type,
 conjugation and ring membership, but no model consumes it — GCN and GraphSAGE
 structurally cannot, so feeding it to GIN/GAT alone would confound the
-architecture comparison with an input-signal advantage. Swapping `GINConv` for
-`GINEConv` is the natural follow-up ablation.
+architecture comparison with an input-signal advantage. That follow-up ablation
+now lives in `src/models_edge.py` (`gine`, `gat_edge`, `sage_edge`) and writes
+to `results/edge_ablation/`, deliberately kept out of `MODELS` so the four-model
+comparison stays edge-blind.
 
 **The datasets overlap.** B3DB aggregates BBBP as one of its sources, and some
 shared molecules carry contradictory labels. The two are therefore trained and
 evaluated independently; training on one and testing on the other would be a
 leaked evaluation.
+
+## Molecule generation (GRPO)
+
+The classifier above is the *scoring* half of a second project: a GAN generator
+trained with GRPO to propose molecules that are predicted permeable, drug-like
+and synthesizable. `src/reward.py` and `src/grpo.py` implement the parts of that
+math formulation which do not depend on the generator architecture. The
+generator, the discriminator, and the outer training loop are **not** here yet.
+
+```
+generator -> SMILES -> RDKit sanitization -> frozen classifier ensemble
+                                          -> QED + SA
+                                          -> discriminator     } -> R(m) -> advantage -> clipped update
+```
+
+Reward (Eq. 5) is a weighted sum of four terms: the discriminator score, the
+frozen permeability classifier, QED, and a synthesizability score. `assemble()`
+takes the discriminator score as an argument rather than owning `D_phi` —
+`D_phi` trains alongside the generator and is the only non-stationary term, so
+keeping it out lets the three stationary terms be tested on their own.
+
+```python
+from src.reward import load_frozen_classifier, score_terms, weights_at, assemble
+
+classify = load_frozen_classifier(dataset="bbbp", models=("gin", "gat", "gine"), seed=0)
+terms = score_terms(smiles_list, classify)
+w = weights_at(step, w0, wf, schedule="linear", k_anneal=1000)
+rewards = assemble(terms, d_scores, w)
+```
+
+**"Frozen" has to mean `eval()`, not just `requires_grad_(False)`.** The
+classifier uses `BatchNorm1d`. In train mode its output depends on the batch it
+is scored in, so the same molecule would earn a different reward depending on
+which candidates happened to share its group — the reward would stop being a
+function of the molecule at all. `load_frozen_classifier` sets `eval()` and
+`_self_check` asserts a molecule scores identically alone and in company.
+
+**Ensemble members must share a scaffold split.** The seed reseeds the split, so
+averaging checkpoints from different seeds averages models that trained on each
+other's held-out molecules. `results/edge_ablation/` reuses the core split
+seed-for-seed, which is what makes a `gin`/`gat`/`gine` ensemble legitimate;
+`_self_check` asserts the saved fold indices match rather than trusting it.
+
+**Validity means sanitization, not grammar.** A SELFIES string always parses to
+*some* molecule, so a generator's syntactic guarantee says nothing about whether
+RDKit will sanitize the result. Only sanitization gates the reward; invalid
+molecules collapse to a flat penalty and never reach the classifier.
+
+**Weight schedules.** `weights_at` covers the fixed baseline, linear and cosine
+annealing (Eq. 6), and the validity-gated switch (Eq. 7) that trades a step
+count for a threshold on measured validity rate. It is a pure function of the
+step and the caller's own validity history, so no schedule carries hidden state
+between steps.
+
+**One update rule for both generator designs.** The formulation leaves open
+whether the generator is autoregressive (SELFIES, a sequence of `T` token
+actions) or one-shot (MolGAN-style atom/bond tensors, a single joint action).
+`clipped_loss` accepts `(N, T)` or `(N,)` log-probs, because the one-shot case
+is exactly the `T = 1` degenerate case of the sequential one — a test asserts
+the two agree. That fork therefore only has to be decided in the generator; the
+reward and the update do not branch on it.
+
+Two traps the self-checks pin down, both of which fail silently rather than
+loudly:
+
+- A group whose rewards are all equal — every molecule invalid, which is the
+  normal early-training state — has zero standard deviation. Its advantages are
+  forced to exactly zero instead of dividing by an epsilon and amplifying float
+  noise into a gradient.
+- Padded positions in a `(N, T)` batch hold arbitrary values, so `exp()`
+  overflows to `inf` there and `inf * 0` is `nan`. Masking has to happen on the
+  log-probability difference, *before* the exponential; masking the ratio
+  afterwards cannot recover it.
 
 ## Data cleaning
 

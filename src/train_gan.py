@@ -34,6 +34,7 @@ from rdkit import Chem, RDLogger
 from torch_geometric.data import Batch
 
 from .datasets import ROOT, _load_raw
+from .diversity import reference_stats, summarize
 from .featurize import smiles_to_graph
 from .generator import CKPT_DIR, SelfiesGenerator
 from .grpo import clipped_loss, group_advantages
@@ -120,6 +121,7 @@ def train(
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
     log: bool = True,
+    seed: int = 0,
 ) -> dict:
     warm = CKPT_DIR / f"{dataset}_pretrained.pt"
     if not warm.exists():
@@ -129,6 +131,12 @@ def train(
             f"advantage. Run it first: "
             f"python -m src.generator --pretrain --dataset {dataset}"
         )
+    # Seed every source of randomness that differs between replicate runs: the
+    # torch RNG drives both sampling and D's init, and `rng` drives D's real
+    # batches. Without this a "3-seed baseline" would be three identical runs.
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     gen = SelfiesGenerator.load(warm, device)
     # Reference policy for the KL term in the diagram: the pretrained generator,
     # frozen. It is what keeps GRPO from drifting off the space of molecules the
@@ -142,9 +150,17 @@ def train(
 
     opt_g = torch.optim.Adam(gen.parameters(), lr=lr_g)
     opt_d = torch.optim.Adam(disc.parameters(), lr=lr_d)
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(seed)
+
+    # Reference descriptor statistics, computed once on the real data and held
+    # fixed for the whole run. Drift must be measured against the real
+    # distribution; measuring it against a rolling window of the generator's
+    # own output would normalize away the trend being looked for.
+    ref_stats = reference_stats(real_pool)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    samples_dir = out_dir / "samples"
+    samples_dir.mkdir(exist_ok=True)
     history, valid_history = [], []
 
     for k in range(steps):
@@ -189,6 +205,14 @@ def train(
             real = [real_pool[i] for i in rng.choice(len(real_pool), group_size)]
             d_loss = _d_step(disc, opt_d, real, roll["smiles"], device)
 
+        # `summarize` measures validity with its own RDKit parse, while the
+        # curriculum gate and the hurdle advantage use reward.score_terms'
+        # Valid(). They should agree, but they are separate code paths and the
+        # logged column must not silently become whichever one merged last --
+        # so keep both, and let a divergence be visible rather than hidden.
+        chem = summarize(roll["smiles"], ref_stats, group_size=group_size)
+        chem["rdkit_valid_frac"] = chem.pop("valid_frac")
+
         row = {
             "step": k,
             "reward_mean": float(rewards.mean()),
@@ -202,21 +226,51 @@ def train(
             "d_loss": d_loss,
             "w_C": w["C"],
             "unique": len({s for s in roll["smiles"] if s}) / group_size,
+            # Chemistry diagnostics. `unique` above is retained as the
+            # contrast case: it is the metric that reported a healthy 40-step
+            # run while the property spread had already collapsed, so it is
+            # logged alongside the structural metrics rather than instead of
+            # them. See src/diversity.py.
+            **chem,
             **stats,
         }
         history.append(row)
+
+        # Dump the raw group every step so any later analysis -- a metric not
+        # thought of yet included -- can be run offline without retraining.
+        if log:
+            (samples_dir / f"step{k:04d}.json").write_text(
+                json.dumps([s for s in roll["smiles"] if s])
+            )
+            # Rewrite history each step rather than once at the end: a run
+            # that dies at step 140 should still yield 140 usable rows.
+            with open(out_dir / "history.csv", "w", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=list(history[0]))
+                writer.writeheader()
+                writer.writerows(history)
+
         if log and (k % 10 == 0 or k == steps - 1):
             print(f"step {k:>4}  R={row['reward_mean']:+.3f}  valid={row['valid_frac']:.0%}  "
-                  f"C={row['c_mean']:.3f}  D_var={row['d_var']:.4f}  "
-                  f"clip={row['clip_frac']:.2f}  kl={row.get('kl', 0):.4f}")
+                  f"C={row['c_mean']:.3f}  scaf={row['scaffold_frac']:.2f}  "
+                  f"tan={row['tanimoto_dist']:.3f}  "
+                  f"tpsa={row['tpsa_drift_sd']:+.2f}sd/{row['tpsa_spread_ratio']:.2f}x  "
+                  f"kl={row.get('kl', 0):.4f}")
 
     if log:
         gen.save(out_dir / f"{dataset}_grpo.pt")
         torch.save(disc.state_dict(), out_dir / f"{dataset}_disc.pt")
-        with open(out_dir / "history.csv", "w", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=list(history[0]))
-            writer.writeheader()
-            writer.writerows(history)
+        # history.csv is already current -- it is rewritten every step above.
+        # Pin the run's configuration and the reference statistics next to it,
+        # so a later comparison between runs cannot silently compare against a
+        # different baseline.
+        (out_dir / "config.json").write_text(json.dumps({
+            "dataset": dataset, "steps": steps, "group_size": group_size,
+            "ppo_epochs": ppo_epochs, "n_d": n_d, "lr_g": lr_g, "lr_d": lr_d,
+            "clip_eps": clip_eps, "kl_coef": kl_coef,
+            "invalid_floor": invalid_floor, "schedule": schedule,
+            "k_anneal": k_anneal, "max_len": max_len, "seed": seed,
+            "reference_stats": ref_stats,
+        }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
                   if s and Chem.MolFromSmiles(s) is not None]
         (out_dir / "samples.json").write_text(json.dumps(sample, indent=1))
@@ -309,12 +363,17 @@ if __name__ == "__main__":
     ap.add_argument("--invalid-floor", type=float, default=-2.0,
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out-dir", default=None,
+                    help="defaults to results/gan/seed<seed>")
     args = ap.parse_args()
 
     if args.steps:
+        out = Path(args.out_dir) if args.out_dir else OUT_DIR / f"seed{args.seed}"
         train(dataset=args.dataset, steps=args.steps, group_size=args.group_size,
               ppo_epochs=args.ppo_epochs, n_d=args.n_d, schedule=args.schedule,
               k_anneal=args.k_anneal, kl_coef=args.kl_coef,
-              invalid_floor=args.invalid_floor, device=args.device)
+              invalid_floor=args.invalid_floor, device=args.device,
+              seed=args.seed, out_dir=out)
     else:
         _self_check()

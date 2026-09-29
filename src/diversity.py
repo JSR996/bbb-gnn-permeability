@@ -101,6 +101,30 @@ def mean_pairwise_tanimoto_distance(mols: list[Chem.Mol], max_n: int = 256,
     return float(1.0 - np.mean(sims))
 
 
+def reference_band(smiles: list[str], n: int, draws: int = 20,
+                   seed: int = 0) -> dict[str, tuple[float, float]]:
+    """Mean and sd of the structural metrics over `draws` subsamples of size n.
+
+    Scaffold fraction and, to a lesser extent, Tanimoto distance depend
+    strongly on sample size -- more molecules means more repeated scaffolds,
+    so the distinct fraction falls. On BBBP it reads 0.758 at n=199 and 0.595
+    at n=982, which is a bigger swing than any effect being looked for. So a
+    generated sample can only be compared against a reference subsampled to
+    the SAME n, and comparing two generated sets of different sizes to each
+    other is meaningless without this.
+    """
+    pool = [s for s in smiles if s]
+    n = min(n, len(pool))
+    rng = np.random.default_rng(seed)
+    acc: dict[str, list[float]] = {"scaffold_frac": [], "tanimoto_dist": []}
+    for _ in range(draws):
+        sub = [pool[i] for i in rng.choice(len(pool), n, replace=False)]
+        row = summarize(sub)
+        for k in acc:
+            acc[k].append(row[k])
+    return {k: (float(np.mean(v)), float(np.std(v))) for k, v in acc.items()}
+
+
 def reference_stats(smiles: list[str]) -> dict[str, tuple[float, float]]:
     """Mean and sd per tracked descriptor over a reference set (BBBP/B3DB).
 
@@ -215,6 +239,14 @@ def _self_check() -> None:
     assert greasy["tpsa_spread_ratio"] < 0.5, greasy["tpsa_spread_ratio"]
     print(f"  greasy probe: tpsa drift={greasy['tpsa_drift_sd']:+.2f} sd  "
           f"spread={greasy['tpsa_spread_ratio']:.2f}x")
+
+    # Scaffold fraction must fall as n rises -- the property that makes
+    # matched-n comparison mandatory. Built from a pool with real repeats.
+    pool = (diverse + decorated) * 12
+    small = reference_band(pool, 6, draws=10)["scaffold_frac"][0]
+    large = reference_band(pool, 60, draws=10)["scaffold_frac"][0]
+    assert small > large, f"scaffold_frac should fall with n ({small} vs {large})"
+    print(f"  reference_band: scaffold_frac {small:.3f} at n=6 -> {large:.3f} at n=60")
 
     print("diversity self-check passed")
 

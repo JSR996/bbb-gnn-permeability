@@ -111,13 +111,24 @@ def sanitizable(smiles: str) -> Chem.Mol | None:
     return None if mol is None or mol.GetNumAtoms() == 0 else mol
 
 
-def score_terms(smiles: list[str], classify) -> dict[str, np.ndarray]:
-    """Per-molecule stationary reward terms. Invalid rows are left at zero."""
+def score_terms(smiles: list[str], classify, tox=None) -> dict[str, np.ndarray]:
+    """Per-molecule stationary reward terms. Invalid rows are left at zero.
+
+    `tox` is an optional frozen toxicity scorer (src.tox.load_frozen_tox). It
+    returns P(active) across the Tox21 assays, and is stored here as the
+    NON-toxicity term `t = 1 - P(active)` so that, like C, QED and SA, higher
+    is better and `assemble` stays a plain weighted sum with no sign
+    exceptions to remember.
+
+    Without it `t` is all ones, i.e. the term is present but inert, so a
+    history logged with and without a toxicity model stays the same shape.
+    """
     n = len(smiles)
     valid = np.zeros(n, dtype=bool)
     c = np.zeros(n)
     qed = np.zeros(n)
     sa = np.zeros(n)
+    t = np.ones(n)
 
     mols, keep = [], []
     for i, smi in enumerate(smiles):
@@ -134,8 +145,12 @@ def score_terms(smiles: list[str], classify) -> dict[str, np.ndarray]:
         # Flip and rescale so higher is better, matching the other three terms.
         raw_sa = np.array([sascorer.calculateScore(m) for m in mols])
         sa[idx] = (SA_MAX - raw_sa) / (SA_MAX - SA_MIN)
+        if tox is not None:
+            # Scored from canonical SMILES rather than the raw input so the
+            # toxicity model sees exactly the molecule the other terms did.
+            t[idx] = 1.0 - np.asarray(tox([Chem.MolToSmiles(m) for m in mols]))
 
-    return {"valid": valid, "c": c, "qed": qed, "sa": sa}
+    return {"valid": valid, "c": c, "qed": qed, "sa": sa, "t": t}
 
 
 def weights_at(
@@ -169,7 +184,11 @@ def weights_at(
     else:
         raise ValueError(f"unknown schedule {schedule!r}")
 
-    return {key: w0[key] + (wf[key] - w0[key]) * lam for key in w0}
+    # A key present in w0 but not wf holds its initial value rather than
+    # raising: the toxicity weight is usually meant to be constant across the
+    # curriculum, and a missing endpoint should mean "do not anneal this one"
+    # rather than crashing a run 80 steps in.
+    return {key: w0[key] + (wf.get(key, w0[key]) - w0[key]) * lam for key in w0}
 
 
 # Calibration of the logit transform, measured once on the BBBP reference set
@@ -233,6 +252,12 @@ def assemble(
         + w["Q"] * terms["qed"]
         + w["S"] * terms["sa"]
     )
+    # Non-toxicity, opt-in. Absent from `w` the term contributes nothing, so
+    # existing callers and their weight dicts keep working unchanged; absent
+    # from `terms` (no toxicity model loaded) it is all ones and adds a
+    # constant, which a group-relative advantage subtracts away.
+    if w.get("T"):
+        r = r + w["T"] * terms.get("t", np.ones_like(r))
     return np.where(terms["valid"], r, invalid_reward)
 
 
@@ -323,6 +348,41 @@ def _self_check() -> None:
     assert not np.allclose(r_raw, r_log), "c_transform did not reach assemble"
     assert np.array_equal(r_raw[~terms["valid"]], r_log[~terms["valid"]]), \
         "invalid molecules must take the flat penalty under either mode"
+
+    # --- toxicity term ----------------------------------------------------
+    # Inert when no model is supplied, so nothing that predates it changes.
+    assert (terms["t"] == 1.0).all(), "t must default to 1 with no tox model"
+    assert np.allclose(assemble(terms, np.full(4, 0.5), w),
+                       assemble(terms, np.full(4, 0.5), {**w, "T": 0.0})), \
+        "T=0 must be identical to T absent"
+
+    # With a stub scorer it must reach the reward, and in the right
+    # direction: more toxic must mean less reward.
+    clean = score_terms(smis, classify, tox=lambda s: np.zeros(len(s)))
+    dirty = score_terms(smis, classify, tox=lambda s: np.ones(len(s)))
+    assert (clean["t"][clean["valid"]] == 1.0).all()
+    assert (dirty["t"][dirty["valid"]] == 0.0).all()
+    wt = {**w, "T": 1.0}
+    r_clean = assemble(clean, np.full(4, 0.5), wt)
+    r_dirty = assemble(dirty, np.full(4, 0.5), wt)
+    assert (r_clean[clean["valid"]] > r_dirty[dirty["valid"]]).all(), \
+        "predicted-toxic molecules must score lower, not higher"
+    # Invalid molecules keep the flat penalty; toxicity must not rescue them.
+    assert (r_clean[~clean["valid"]] == 0.0).all()
+
+    # Every other term must be untouched by adding a toxicity model.
+    for key in ("c", "qed", "sa", "valid"):
+        assert np.array_equal(terms[key], clean[key]), f"{key} changed"
+
+    # A weight dict without T must still work, since every existing caller
+    # has one.
+    assert np.isfinite(assemble(terms, np.full(4, 0.5), {"D": 1, "C": 1,
+                                                         "Q": 0.5, "S": 0.5})).all()
+    # And a schedule whose wf omits T must hold T constant rather than raise.
+    got = weights_at(50, {"D": 1.0, "C": 0.2, "Q": 0.5, "S": 0.5, "T": 0.8},
+                     {"D": 0.3, "C": 1.5, "Q": 0.5, "S": 0.5},
+                     schedule="linear", k_anneal=100)
+    assert got["T"] == 0.8, got
 
     print(f"C(aspirin)={terms['c'][0]:.3f}  QED={terms['qed'][0]:.3f}  "
           f"SA_norm={terms['sa'][0]:.3f}  R={r[0]:.3f}")

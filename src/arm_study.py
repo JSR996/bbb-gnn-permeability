@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem, RDLogger
 
+from .alerts import count_alerts
 from .datasets import ROOT
 
 RDLogger.DisableLog("rdApp.*")
@@ -46,10 +47,17 @@ RUNS = {
     ("gate_gm", 0): RESULTS / "guarded" / "gate_gm",
     ("gate_gm", 1): RESULTS / "arm_study" / "gate_gm_s1",
     ("gate_gm", 2): RESULTS / "arm_study" / "gate_gm_s2",
+    # gate + geometric + soft reactive-group alerts (lambda 0.3, weight 3)
+    ("alert", 0): RESULTS / "arm_study" / "alert_s0",
+    ("alert", 1): RESULTS / "arm_study" / "alert_s1",
+    ("alert", 2): RESULTS / "arm_study" / "alert_s2",
 }
 
 METRICS = ["scaffold_frac", "tanimoto_dist", "c_mean",
            "tpsa_spread_ratio", "hba_spread_ratio", "valid_frac"]
+# Recomputed from samples for every arm, so arms trained without the alert
+# term are still measured on it.
+SAMPLE_METRICS = ["frac_under10", "median_heavy", "alerts_per_mol", "frac_alerted"]
 
 # Warm start (no GRPO), measured in kl_sweep; the reference every arm is
 # trying to beat on diversity while still improving on C.
@@ -77,6 +85,12 @@ def endpoints(tail: int = 20) -> pd.DataFrame:
             hv = np.array([m.GetNumHeavyAtoms() for m in mols])
             row["frac_under10"] = float((hv < 10).mean())
             row["median_heavy"] = float(np.median(hv))
+            # Alerts are recomputed here for every arm, including the ones
+            # trained without the term, so the comparison is on the same
+            # footing rather than reading each run's own logged value.
+            na = np.array([count_alerts(m) for m in mols])
+            row["alerts_per_mol"] = float(na.mean())
+            row["frac_alerted"] = float((na > 0).mean())
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -114,7 +128,7 @@ def main() -> None:
     print("=" * 88)
     print("PER-ARM MEANS (last 20 steps, mean +- sd over seeds)")
     print("=" * 88)
-    cols = [c for c in METRICS + ["frac_under10", "median_heavy"] if c in df]
+    cols = [c for c in METRICS + SAMPLE_METRICS if c in df]
     g = df.groupby("arm")[cols].agg(["mean", "std"])
     print(g.round(3).to_string())
     print(f"\n  warm-start control: " +

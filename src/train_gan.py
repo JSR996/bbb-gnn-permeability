@@ -117,6 +117,7 @@ def train(
     invalid_floor: float = -2.0,
     schedule: str = "linear",
     k_anneal: int = 100,
+    c_transform: str = "raw",
     max_len: int = 72,
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
@@ -173,7 +174,7 @@ def train(
         valid_history.append(float(terms["valid"].mean()))
         w = weights_at(k, W0, WF, schedule=schedule, k_anneal=k_anneal,
                        valid_history=valid_history)
-        rewards = assemble(terms, d_scores, w)
+        rewards = assemble(terms, d_scores, w, c_transform=c_transform)
         # Hurdle form: the reward from `assemble` is zero-inflated by
         # construction, so the invalid molecules must not set the scale the
         # valid ones are ranked on (see group_advantages).
@@ -269,6 +270,7 @@ def train(
             "clip_eps": clip_eps, "kl_coef": kl_coef,
             "invalid_floor": invalid_floor, "schedule": schedule,
             "k_anneal": k_anneal, "max_len": max_len, "seed": seed,
+            "c_transform": c_transform,
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -364,6 +366,8 @@ if __name__ == "__main__":
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--c-transform", default="raw", choices=["raw", "logit"],
+                    help="rescale the permeability term; see reward.transform_c")
     ap.add_argument("--out-dir", default=None,
                     help="defaults to results/gan/seed<seed>")
     args = ap.parse_args()
@@ -374,6 +378,6 @@ if __name__ == "__main__":
               ppo_epochs=args.ppo_epochs, n_d=args.n_d, schedule=args.schedule,
               k_anneal=args.k_anneal, kl_coef=args.kl_coef,
               invalid_floor=args.invalid_floor, device=args.device,
-              seed=args.seed, out_dir=out)
+              seed=args.seed, out_dir=out, c_transform=args.c_transform)
     else:
         _self_check()

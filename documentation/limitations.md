@@ -7,8 +7,12 @@ which has the evidence behind most of these.
 Each item is marked:
 
 - **[measured]** — demonstrated with numbers in this repo
+- **[mitigated]** — a failure mode now contained, with the residue named
 - **[suspected]** — plausible, not yet tested
 - **[untested]** — a claim the project relies on that nobody has checked
+
+Nothing here is marked "resolved". Two failure modes are contained and one
+reporting flaw is fixed; the underlying objective is unchanged.
 
 The generation half is a research prototype. **Nothing it emits is a synthesis
 candidate**, and several items below explain why that is not conservatism.
@@ -17,7 +21,20 @@ candidate**, and several items below explain why that is not conservatism.
 
 ## 1. The generator
 
-### 1.1 Reward hacking is total, not partial **[measured]**
+### 1.1 Reward hacking is total, not partial **[mitigated]**
+
+*Contained by the hard size gate (`--min-heavy-atoms 10`), which routes
+undersized molecules through the invalidity hurdle. Across 3 seeds it lifts
+scaffold diversity to 0.828 ± 0.004 — above the warm start's 0.736 and far
+more stable than the ungated 0.769 ± 0.027 — for 0.004 of mean C, and cuts
+molecules under 10 heavy atoms from 10.4% to 2.1%.*
+
+**What remains.** The gate blocks one manifestation, not the mechanism. The
+generator still optimizes a proxy it can outrun: the gate arm trips BRENK on
+43.8% of what it makes against 35.0% for real BBB+ drugs. Nothing has been
+run past 150 steps under the gate, and the baseline collapse took until
+step ~150 to complete. The original measurement follows.
+
 200 steps × 3 seeds: scaffold fraction 0.80 → 0.07–0.14, Tanimoto distance
 0.90 → 0.25–0.45, descriptor spread ~0.45 → ~0.12, while classifier reward
 rises 0.88 → 0.99. Validity stays at 100% throughout, so every metric the loop
@@ -28,6 +45,23 @@ The 150-step logit arm converged on carbon tetrachloride, freon-12, freon-11
 and tetrafluoromethane. At the late-training weights CCl₄ scores **2.280**
 against caffeine's **2.063**. The kl=0.02 baseline failed differently — 41 of
 64 copies of a single biphenyl amide.
+
+### 1.2b Soft in-loop alert penalties do not generalize **[mitigated]**
+
+*Contained by moving structural screening out of the loop entirely
+(`src/postfilter.py`).* An `exp(-λN)` penalty at λ=0.3, weight 3 cut the
+SMARTS set it was trained against (0.339 → 0.203) while leaving BRENK
+(0.438 → 0.406) and BRENK+PAINS+NIH (0.464 → 0.427) inside seed noise. It
+learned the checklist, not the chemistry — Goodhart one level up from the
+reward hacking it was added to fix. See §10 of
+`reward_hacking_investigation.md`.
+
+**What remains.** Post-filtering is containment, not repair: the policy is
+unchanged and still produces the same reactive molecules, they are simply
+not shipped. Yield is 40% on the gate seeds. And the alert reduction that
+motivated the term was itself never statistically resolved — paired
+`alert − gate` is −0.250 alerts/mol with CI [−0.558, +0.058] at n=3, while
+the C cost *was* resolved.
 
 ### 1.3 No intervention fixes it yet **[measured]**
 - Raising `kl_coef` to 0.3 restores *structural* diversity (scaffold 1.06× the
@@ -177,6 +211,28 @@ having verified it.
 
 ---
 
+## 4b. Validation protocols now in force
+
+### 4b.1 The held-out instrument rule
+Any reward term meant to suppress a structural feature must be evaluated on
+libraries the policy never saw during optimization
+(`alerts.cross_instrument_check()`). §10.2 is what happens without it: a
+term that looks like a 40% improvement on its own metric and moves nothing
+independent. Corollary — never train against the union of every available
+instrument, because that consumes the only detector.
+
+### 4b.2 Alert rates are instrument-specific
+Rates from different libraries are not comparable. Targeted-vs-BRENK
+Jaccard on BBBP BBB+ is 0.36. Every reported rate must name its instrument.
+**[measured]**
+
+### 4b.3 Ranking requires discrimination
+Ranking candidates by `C` is meaningful only while `C` separates them. At
+step 199 of the baseline its within-group sd was 0.006, below the model's
+own MC-dropout uncertainty, so a ranking there orders noise. `postfilter`
+reports the survivor spread and withholds the recommendation below sd 0.02.
+**[measured]**
+
 ## 5. Engineering
 
 ### 5.1 No dependency pinning or setup script **[measured]**
@@ -229,3 +285,8 @@ Recorded because each was a plausible hypothesis that measurement overturned.
    scale that could not show it.
 7. Descriptor distance, applicability domain and Tox21 were each expected to
    catch the solvents. None does.
+8. "The alert penalty makes the generator cleaner than approved drugs." True
+   only on the instrument it was trained against; on BRENK it is 0.406
+   against the drugs' 0.350. Five of six guard features have now failed or
+   failed to generalize — the pattern is evidence about counterweighting as
+   an approach, not about the individual terms.

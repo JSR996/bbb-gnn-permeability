@@ -53,6 +53,13 @@ overhead makes it slower. `--device mps` is available to test that.
 | `src/train_edge.py` | edge ablation runs; writes `results/edge_ablation/` |
 | `src/reward.py` | frozen-classifier reward for generation (Eq. 5–7) |
 | `src/grpo.py` | group-relative advantage and clipped surrogate (Eq. 6–7) |
+| `src/generator.py` | Case A generator: autoregressive SELFIES policy |
+| `src/train_gan.py` | outer GAN+GRPO loop |
+| `src/diversity.py` | scaffold / Tanimoto / descriptor-drift diagnostics |
+| `src/analyze_drift.py` | collapse trajectory plots and first-vs-last table |
+| `src/classifier_ood.py` | is the reward's classifier trustworthy off-distribution? |
+| `src/kl_sweep.py` | KL intervention sweep against a three-part criterion |
+| `src/paired_analysis.py` | paired-seed architecture comparison |
 | `notebooks/results.ipynb` | EDA, results tables, ROC/PR curves |
 
 Results land in `results/<dataset>/<model>/seed<N>/`, aggregated into

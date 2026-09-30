@@ -172,16 +172,64 @@ def weights_at(
     return {key: w0[key] + (wf[key] - w0[key]) * lam for key in w0}
 
 
+# Calibration of the logit transform, measured once on the BBBP reference set
+# (n=2039, seed-0 gin/gat/gine ensemble):
+#
+#   raw C    mean 0.7447   sd 0.2880
+#   logit C  mean 1.8591   sd 2.1581
+#
+# The affine map below sends logit C onto raw C's mean and sd over that
+# reference. Without it the transform would also multiply the C term's
+# effective weight by ~7.5x, and an A/B against raw C would be confounded by
+# scale rather than isolating the change in shape. Recompute with
+# `python -m src.reward --calibrate` if the ensemble or dataset changes.
+LOGIT_CALIB = {"mu_raw": 0.7447, "sd_raw": 0.2880,
+               "mu_logit": 1.8591, "sd_logit": 2.1581}
+
+
+def transform_c(c: np.ndarray, mode: str = "raw",
+                calib: dict[str, float] | None = None) -> np.ndarray:
+    """Rescale the permeability term. `raw` is the identity.
+
+    `logit` exists because the classifier's output saturates near 1 where the
+    sigmoid compresses real differences into nothing: measured on the
+    collapsed baseline, between-molecule sd is 0.006 in probability space but
+    0.35 in logit space, and MC-dropout uncertainty is FLAT across that same
+    range in logit space (0.86 on real BBBP, 0.99 on collapsed samples) while
+    appearing to shrink 3.6x in probability space. The apparent certainty is
+    the scale, not the model. GRPO ranks within a group, so a scale that
+    compresses differences costs it exactly the signal it consumes.
+
+    The transform is calibrated to leave the term's mean and sd unchanged on
+    the reference set, so w_C keeps its meaning across modes.
+    """
+    if mode == "raw":
+        return c
+    if mode != "logit":
+        raise ValueError(f"unknown c transform {mode!r}")
+    k = calib or LOGIT_CALIB
+    p = np.clip(c, 1e-6, 1.0 - 1e-6)
+    z = (np.log(p / (1.0 - p)) - k["mu_logit"]) / k["sd_logit"]
+    return k["mu_raw"] + k["sd_raw"] * z
+
+
 def assemble(
     terms: dict[str, np.ndarray],
     d_scores: np.ndarray,
     w: dict[str, float],
     invalid_reward: float = 0.0,
+    c_transform: str = "raw",
 ) -> np.ndarray:
-    """Eq. 5. Invalid molecules collapse to a flat penalty, bypassing every term."""
+    """Eq. 5. Invalid molecules collapse to a flat penalty, bypassing every term.
+
+    `c_transform` rescales the permeability term only; see `transform_c`.
+    It is applied here rather than in `score_terms` so that `terms["c"]`
+    stays the raw probability for logging and diagnostics, and a history
+    written under one mode remains comparable to one written under the other.
+    """
     r = (
         w["D"] * np.asarray(d_scores, dtype=float)
-        + w["C"] * terms["c"]
+        + w["C"] * transform_c(terms["c"], c_transform)
         + w["Q"] * terms["qed"]
         + w["S"] * terms["sa"]
     )
@@ -237,10 +285,74 @@ def _self_check() -> None:
     assert weights_at(5, w0, wf, "gated", valid_history=[0.5] * 10)["C"] == 0.1
     assert weights_at(5, w0, wf)["C"] == 0.1, "no wf -> fixed"
 
+    # --- logit transform ------------------------------------------------
+    # Identity when asked for, and order-preserving always: the transform may
+    # rescale the term but must never reorder two molecules, or it is not a
+    # recalibration but a different objective.
+    c = np.array([0.05, 0.3, 0.5, 0.9, 0.99, 0.999])
+    assert np.array_equal(transform_c(c, "raw"), c)
+    t = transform_c(c, "logit")
+    assert np.all(np.diff(t) > 0), f"logit transform reordered molecules: {t}"
+
+    # Calibrated to leave the reference mean and sd alone, so w_C keeps its
+    # meaning across modes and an A/B isolates shape rather than weight.
+    k = LOGIT_CALIB
+    at_mean = transform_c(np.array([1 / (1 + np.exp(-k["mu_logit"]))]), "logit")[0]
+    assert abs(at_mean - k["mu_raw"]) < 1e-6, at_mean
+
+    # The point of the exercise: differences that the sigmoid compresses to
+    # nothing must survive. On the collapsed baseline's observed range the
+    # raw spread is ~0.006 and the transform must expand it substantially.
+    tight = np.array([0.959, 0.975, 0.990, 0.994])
+    gain = transform_c(tight, "logit").std() / tight.std()
+    assert gain > 5, f"transform recovered too little spread ({gain:.2f}x)"
+
+    # Saturated inputs must stay finite rather than becoming inf through the
+    # log; a single inf would poison the whole group's advantage.
+    assert np.all(np.isfinite(transform_c(np.array([0.0, 1.0]), "logit")))
+
+    try:
+        transform_c(c, "sigmoid")
+        raise AssertionError("unknown transform should have been rejected")
+    except ValueError:
+        pass
+
+    # And it must reach the reward: same terms, different mode, different R.
+    r_raw = assemble(terms, np.full(4, 0.5), w)
+    r_log = assemble(terms, np.full(4, 0.5), w, c_transform="logit")
+    assert not np.allclose(r_raw, r_log), "c_transform did not reach assemble"
+    assert np.array_equal(r_raw[~terms["valid"]], r_log[~terms["valid"]]), \
+        "invalid molecules must take the flat penalty under either mode"
+
     print(f"C(aspirin)={terms['c'][0]:.3f}  QED={terms['qed'][0]:.3f}  "
           f"SA_norm={terms['sa'][0]:.3f}  R={r[0]:.3f}")
+    print(f"logit transform: {gain:.1f}x spread recovery on the saturated range")
     print("reward self-check passed")
 
 
+def _calibrate(dataset: str = "bbbp", device: str = "cpu") -> None:
+    """Recompute LOGIT_CALIB against the current ensemble and dataset."""
+    import pandas as pd
+
+    from .datasets import DATASETS
+
+    cfg = DATASETS[dataset]
+    df = pd.read_csv(cfg["path"], sep=cfg["sep"])
+    smiles = df[cfg["smiles_col"]].dropna().tolist()
+    classify = load_frozen_classifier(dataset=dataset, device=device)
+    mols = [m for m in (sanitizable(s) for s in smiles) if m is not None]
+    p = np.concatenate([classify(mols[i:i + 256]) for i in range(0, len(mols), 256)])
+    q = np.clip(p, 1e-6, 1 - 1e-6)
+    lg = np.log(q / (1 - q))
+    print(f"n={len(p)}")
+    print('LOGIT_CALIB = {"mu_raw": %.4f, "sd_raw": %.4f,' % (p.mean(), p.std()))
+    print('               "mu_logit": %.4f, "sd_logit": %.4f}' % (lg.mean(), lg.std()))
+
+
 if __name__ == "__main__":
-    _self_check()
+    import sys
+
+    if "--calibrate" in sys.argv:
+        _calibrate()
+    else:
+        _self_check()

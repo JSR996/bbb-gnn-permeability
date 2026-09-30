@@ -1,0 +1,4 @@
+group,members,set,n,mean_p,member_sd,max_spread,frac_extreme,note
+current,3,real,2039.0,0.7447481373022314,0.06265694447763709,0.14460343798342043,0.33545855811672387,
+current,3,generated,200.0,0.9910613206028939,0.005383471478112431,0.012986712157726288,1.0,
+candidate,1,,,,,,,single member -- disagreement undefined

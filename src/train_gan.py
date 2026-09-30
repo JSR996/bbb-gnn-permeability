@@ -119,6 +119,9 @@ def train(
     k_anneal: int = 100,
     c_transform: str = "raw",
     w_tox: float = 0.0,
+    min_heavy_atoms: int = 0,
+    min_mw: float = 0.0,
+    aggregate: str = "linear",
     max_len: int = 72,
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
@@ -177,12 +180,14 @@ def train(
         roll = gen.sample(group_size, max_len=max_len, device=device)
 
         # --- 2. reward against a single frozen phi snapshot ------------------
-        terms = score_terms(roll["smiles"], classify, tox=toxic)
+        terms = score_terms(roll["smiles"], classify, tox=toxic,
+                            min_heavy_atoms=min_heavy_atoms, min_mw=min_mw)
         d_scores = disc.score(roll["smiles"], device=device)
         valid_history.append(float(terms["valid"].mean()))
         w = weights_at(k, {**W0, "T": w_tox}, WF, schedule=schedule,
                        k_anneal=k_anneal, valid_history=valid_history)
-        rewards = assemble(terms, d_scores, w, c_transform=c_transform)
+        rewards = assemble(terms, d_scores, w, c_transform=c_transform,
+                           aggregate=aggregate)
         # Hurdle form: the reward from `assemble` is zero-inflated by
         # construction, so the invalid molecules must not set the scale the
         # valid ones are ranked on (see group_advantages).
@@ -231,6 +236,13 @@ def train(
             # Logged as PREDICTED TOXICITY (1 - t), because that is the
             # quantity to watch rise; the reward carries its complement.
             "tox_mean": float(1.0 - terms["t"][terms["valid"]].mean()) if terms["valid"].any() else 0.0,
+            # Group dilution: the size gate removes candidates, and a group
+            # left with fewer than two valid ones carries no ranking signal
+            # at all (group_advantages zeroes it). Logged separately from
+            # sanitization failures so a starved group is diagnosable rather
+            # than just quiet.
+            "undersized_frac": float(terms["undersized"].mean()),
+            "n_rankable": int(terms["valid"].sum()),
             # Section 3.3 diagnostic: as D sharpens, the variance of its term
             # drifts relative to the fixed-variance C term, changing their
             # effective weight on A_i even with w_D, w_C literally constant.
@@ -282,6 +294,8 @@ def train(
             "invalid_floor": invalid_floor, "schedule": schedule,
             "k_anneal": k_anneal, "max_len": max_len, "seed": seed,
             "c_transform": c_transform, "w_tox": w_tox,
+            "min_heavy_atoms": min_heavy_atoms, "min_mw": min_mw,
+            "aggregate": aggregate,
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -377,6 +391,11 @@ if __name__ == "__main__":
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--min-heavy-atoms", type=int, default=0,
+                    help="gate out molecules below this heavy-atom count")
+    ap.add_argument("--min-mw", type=float, default=0.0)
+    ap.add_argument("--aggregate", default="linear",
+                    choices=["linear", "geometric"])
     ap.add_argument("--w-tox", type=float, default=0.0,
                     help="weight on the non-toxicity term (needs src.tox)")
     ap.add_argument("--c-transform", default="raw", choices=["raw", "logit"],
@@ -392,6 +411,7 @@ if __name__ == "__main__":
               k_anneal=args.k_anneal, kl_coef=args.kl_coef,
               invalid_floor=args.invalid_floor, device=args.device,
               seed=args.seed, out_dir=out, c_transform=args.c_transform,
-              w_tox=args.w_tox)
+              w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
+              min_mw=args.min_mw, aggregate=args.aggregate)
     else:
         _self_check()

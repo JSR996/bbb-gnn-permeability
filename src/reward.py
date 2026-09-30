@@ -24,6 +24,7 @@ from torch_geometric.data import Batch
 from .featurize import smiles_to_graph
 from .models import build_model
 from .models_edge import EDGE_MODELS, build_edge_model
+from .alerts import alert_score
 from .train import RESULTS_DIR
 
 RDLogger.DisableLog("rdApp.*")
@@ -112,8 +113,8 @@ def sanitizable(smiles: str) -> Chem.Mol | None:
 
 
 def score_terms(smiles: list[str], classify, tox=None,
-                min_heavy_atoms: int = 0, min_mw: float = 0.0
-                ) -> dict[str, np.ndarray]:
+                min_heavy_atoms: int = 0, min_mw: float = 0.0,
+                alert_lambda: float = 0.0) -> dict[str, np.ndarray]:
     """Per-molecule stationary reward terms. Invalid rows are left at zero.
 
     `tox` is an optional frozen toxicity scorer (src.tox.load_frozen_tox). It
@@ -148,6 +149,7 @@ def score_terms(smiles: list[str], classify, tox=None,
     qed = np.zeros(n)
     sa = np.zeros(n)
     t = np.ones(n)
+    a = np.ones(n)
 
     undersized = np.zeros(n, dtype=bool)
 
@@ -172,12 +174,17 @@ def score_terms(smiles: list[str], classify, tox=None,
         # Flip and rescale so higher is better, matching the other three terms.
         raw_sa = np.array([sascorer.calculateScore(m) for m in mols])
         sa[idx] = (SA_MAX - raw_sa) / (SA_MAX - SA_MIN)
+        if alert_lambda:
+            # Reactive-group penalty, exp(-lambda * n_distinct_alerts). Soft
+            # rather than a gate because 32% of real BBB+ drugs trip the same
+            # patterns -- a veto would reject a third of the answer.
+            a[idx] = alert_score([Chem.MolToSmiles(m) for m in mols], alert_lambda)
         if tox is not None:
             # Scored from canonical SMILES rather than the raw input so the
             # toxicity model sees exactly the molecule the other terms did.
             t[idx] = 1.0 - np.asarray(tox([Chem.MolToSmiles(m) for m in mols]))
 
-    return {"valid": valid, "c": c, "qed": qed, "sa": sa, "t": t,
+    return {"valid": valid, "c": c, "qed": qed, "sa": sa, "t": t, "a": a,
             "undersized": undersized}
 
 
@@ -288,6 +295,12 @@ def assemble(
     # constant, which a group-relative advantage subtracts away.
     if w.get("T"):
         parts["T"] = terms.get("t", np.ones_like(parts["C"]))
+    # Reactive-group alerts, opt-in the same way. Inside a geometric mean the
+    # 1/n exponent dilutes this heavily: at lambda 0.15 and weight 1 a
+    # four-alert molecule still keeps 0.89 of its reward. Weight it to match
+    # the bite intended, and see the table in the commit message.
+    if w.get("A"):
+        parts["A"] = terms.get("a", np.ones_like(parts["C"]))
 
     if aggregate == "linear":
         r = sum(w[k] * v for k, v in parts.items() if w.get(k))
@@ -532,6 +545,30 @@ def _self_check() -> None:
         raise AssertionError("unknown aggregate should have been rejected")
     except ValueError:
         pass
+
+    # --- alert term -------------------------------------------------------
+    assert (terms["a"] == 1.0).all(), "alerts must default to inert"
+    az = "CC(NC1=CC=CC=C1)OCC(=O)N2CC2C(C)C3=CC=C(F)C=C3CC"   # aziridine, gate+GM
+    al = score_terms([smis[0], az], classify, alert_lambda=0.3)
+    assert al["a"][0] == 1.0, "aspirin trips no alert"
+    assert al["a"][1] < 1.0, "aziridine must be penalized"
+    # It must reach the reward, and only when weighted.
+    d2 = np.full(2, 0.5)
+    w2 = {"D": 1.0, "C": 1.0, "Q": 1.0, "S": 1.0}
+    assert np.allclose(assemble(al, d2, w2), assemble(al, d2, {**w2, "A": 0.0}))
+    # Compare at FIXED weights, varying only the alert score -- adding a
+    # term changes the geometric normalizer (total weight), so a
+    # with-versus-without comparison is not controlled and can move either
+    # way regardless of the penalty.
+    wa = {**w2, "A": 3.0}
+    pen = assemble(al, d2, wa, aggregate="geometric")
+    clean_al = {**al, "a": np.ones_like(al["a"])}
+    nop = assemble(clean_al, d2, wa, aggregate="geometric")
+    assert pen[1] < nop[1], "alert term did not reduce the flagged molecule"
+    assert abs(pen[0] - nop[0]) < 1e-9, "unflagged molecule must be untouched"
+    # And the bite must scale with lambda.
+    hi = score_terms([smis[0], az], classify, alert_lambda=0.8)
+    assert assemble(hi, d2, wa, aggregate="geometric")[1] < pen[1]
 
     print(f"C(aspirin)={terms['c'][0]:.3f}  QED={terms['qed'][0]:.3f}  "
           f"SA_norm={terms['sa'][0]:.3f}  R={r[0]:.3f}")

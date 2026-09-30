@@ -122,6 +122,8 @@ def train(
     min_heavy_atoms: int = 0,
     min_mw: float = 0.0,
     aggregate: str = "linear",
+    alert_lambda: float = 0.0,
+    w_alert: float = 0.0,
     max_len: int = 72,
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
@@ -181,10 +183,11 @@ def train(
 
         # --- 2. reward against a single frozen phi snapshot ------------------
         terms = score_terms(roll["smiles"], classify, tox=toxic,
-                            min_heavy_atoms=min_heavy_atoms, min_mw=min_mw)
+                            min_heavy_atoms=min_heavy_atoms, min_mw=min_mw,
+                            alert_lambda=alert_lambda)
         d_scores = disc.score(roll["smiles"], device=device)
         valid_history.append(float(terms["valid"].mean()))
-        w = weights_at(k, {**W0, "T": w_tox}, WF, schedule=schedule,
+        w = weights_at(k, {**W0, "T": w_tox, "A": w_alert}, WF, schedule=schedule,
                        k_anneal=k_anneal, valid_history=valid_history)
         rewards = assemble(terms, d_scores, w, c_transform=c_transform,
                            aggregate=aggregate)
@@ -242,6 +245,10 @@ def train(
             # sanitization failures so a starved group is diagnosable rather
             # than just quiet.
             "undersized_frac": float(terms["undersized"].mean()),
+            # Mean distinct reactive-group alerts among valid molecules --
+            # the quantity this term exists to drive down.
+            "alerts_mean": float(-np.log(terms["a"][terms["valid"]]).mean()
+                                 / alert_lambda) if alert_lambda and terms["valid"].any() else 0.0,
             "n_rankable": int(terms["valid"].sum()),
             # Section 3.3 diagnostic: as D sharpens, the variance of its term
             # drifts relative to the fixed-variance C term, changing their
@@ -295,7 +302,8 @@ def train(
             "k_anneal": k_anneal, "max_len": max_len, "seed": seed,
             "c_transform": c_transform, "w_tox": w_tox,
             "min_heavy_atoms": min_heavy_atoms, "min_mw": min_mw,
-            "aggregate": aggregate,
+            "aggregate": aggregate, "alert_lambda": alert_lambda,
+            "w_alert": w_alert,
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -391,6 +399,10 @@ if __name__ == "__main__":
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--alert-lambda", type=float, default=0.0,
+                    help="decay rate for exp(-lambda*n_alerts); 0 disables")
+    ap.add_argument("--w-alert", type=float, default=0.0,
+                    help="weight on the alert term (see src/alerts.py)")
     ap.add_argument("--min-heavy-atoms", type=int, default=0,
                     help="gate out molecules below this heavy-atom count")
     ap.add_argument("--min-mw", type=float, default=0.0)
@@ -412,6 +424,7 @@ if __name__ == "__main__":
               invalid_floor=args.invalid_floor, device=args.device,
               seed=args.seed, out_dir=out, c_transform=args.c_transform,
               w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
-              min_mw=args.min_mw, aggregate=args.aggregate)
+              min_mw=args.min_mw, aggregate=args.aggregate,
+              alert_lambda=args.alert_lambda, w_alert=args.w_alert)
     else:
         _self_check()

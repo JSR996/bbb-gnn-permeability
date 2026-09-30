@@ -95,6 +95,29 @@ def guards(probe: dict[str, str], real: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def training_data_audit(limit: int = 16) -> pd.DataFrame:
+    """Why the classifier believes CCl4 crosses the BBB: because it does.
+
+    BBBP labels a TRANSPORT property -- "crosses the blood-brain barrier" --
+    not a safety or drug-likeness one. Volatile anaesthetics and chlorinated
+    solvents cross it readily, so they sit in the positive class. Chloroform,
+    dichloromethane, bromoform and nitrous oxide are all in BBBP labelled 1.
+
+    Carbon tetrachloride is therefore not an extrapolation failure. It is an
+    interpolation between two positive training examples, and the classifier
+    is right about the only question it was ever asked. No filter bolted onto
+    the reward changes what the label means.
+    """
+    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    rows = []
+    for r in df.itertuples():
+        m = Chem.MolFromSmiles(r.smiles)
+        if m:
+            rows.append({"heavy_atoms": m.GetNumHeavyAtoms(), "smiles": r.smiles,
+                         "label": r.p_np})
+    return pd.DataFrame(rows).sort_values("heavy_atoms").head(limit)
+
+
 def main(device: str = "cpu") -> None:
     real = [s for s in pd.read_csv(ROOT / "BBBP.csv")["smiles"].dropna()
             if Chem.MolFromSmiles(s)]
@@ -145,6 +168,28 @@ def main(device: str = "cpu") -> None:
     print("                    BBBP's own 5th percentile of 0.25. Caffeine and")
     print("                    diazepam read 1.00 only because they are in the")
     print("                    training set, so that column flatters itself.")
+
+    print("\n" + "=" * 66)
+    print("TRAINING DATA AUDIT -- why the classifier believes it")
+    print("=" * 66)
+    a = training_data_audit()
+    print(a.to_string(index=False))
+    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    n_small = n_small_pos = 0
+    for r in df.itertuples():
+        m = Chem.MolFromSmiles(r.smiles)
+        if m and m.GetNumHeavyAtoms() <= 8:
+            n_small += 1
+            n_small_pos += int(r.p_np == 1)
+    print(f"\n  molecules with <=8 heavy atoms: {n_small}, of which "
+          f"BBB+ = {n_small_pos}")
+    print("\n  BBBP labels a TRANSPORT property, not a safety one. Chloroform,")
+    print("  dichloromethane, bromoform and nitrous oxide are all in the")
+    print("  positive class, correctly -- anaesthetics and solvents do cross.")
+    print("  Carbon tetrachloride is not an extrapolation failure: it sits")
+    print("  between two positive training examples. The classifier is right")
+    print("  about the only question it was asked, and no filter bolted onto")
+    print("  the reward changes what the label means.")
 
 
 if __name__ == "__main__":

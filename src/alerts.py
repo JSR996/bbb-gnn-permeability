@@ -137,3 +137,63 @@ def _self_check() -> None:
 
 if __name__ == "__main__":
     _self_check()
+
+
+def cross_instrument_check(arms: dict[str, list[str]] | None = None) -> "object":
+    """Score every arm on the targeted set AND on independent catalogues.
+
+    This exists because a penalty trained against one pattern set will
+    reduce THAT set whether or not it reduces reactivity, and the only way
+    to tell the two apart is to measure on patterns the training never saw.
+
+    It also guards a reporting trap: the 32% figure for real BBB+ drugs is
+    this module's targeted set, while an earlier 35% figure was BRENK alone.
+    Those look comparable and are not -- their Jaccard overlap on BBBP BBB+
+    is 0.36, so they flag largely different molecules and the similar
+    headline rate is a coincidence.
+    """
+    import json
+
+    import pandas as pd
+    from rdkit.Chem import FilterCatalog
+    from rdkit.Chem.FilterCatalog import FilterCatalogParams as P
+
+    from .datasets import ROOT
+
+    def cat(names):
+        p = P()
+        for c in names:
+            p.AddCatalog(getattr(P.FilterCatalogs, c))
+        return FilterCatalog.FilterCatalog(p)
+
+    brenk = cat(["BRENK"])
+    mixed = cat(["BRENK", "PAINS_A", "PAINS_B", "PAINS_C", "NIH"])
+    arms = arms or {
+        "raw": ["results/c_transform/raw", "results/arm_study/raw_s1",
+                "results/arm_study/raw_s2"],
+        "gate": ["results/guarded/gate", "results/arm_study/gate_s1",
+                 "results/arm_study/gate_s2"],
+        "gate_gm": ["results/guarded/gate_gm", "results/arm_study/gate_gm_s1",
+                    "results/arm_study/gate_gm_s2"],
+        "alert": [f"results/arm_study/alert_s{i}" for i in range(3)],
+    }
+    rows = []
+    for arm, dirs in arms.items():
+        mols = []
+        for d in dirs:
+            f = ROOT / d / "samples" / "step0149.json"
+            if f.exists():
+                mols += [m for m in (Chem.MolFromSmiles(s)
+                                     for s in json.load(open(f))) if m]
+        if mols:
+            rows.append({"set": arm, "n": len(mols),
+                         "targeted": np.mean([count_alerts(m) > 0 for m in mols]),
+                         "brenk": np.mean([brenk.HasMatch(m) for m in mols]),
+                         "brenk_pains_nih": np.mean([mixed.HasMatch(m) for m in mols])})
+    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    pos = [m for m in (Chem.MolFromSmiles(s) for s in df[df.p_np == 1].smiles) if m]
+    rows.append({"set": "BBBP BBB+", "n": len(pos),
+                 "targeted": np.mean([count_alerts(m) > 0 for m in pos]),
+                 "brenk": np.mean([brenk.HasMatch(m) for m in pos]),
+                 "brenk_pains_nih": np.mean([mixed.HasMatch(m) for m in pos])})
+    return pd.DataFrame(rows)

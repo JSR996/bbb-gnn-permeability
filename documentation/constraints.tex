@@ -1,0 +1,255 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\1}{\mathbb{1}}
+\newcommand{\Valid}{\mathrm{Valid}}
+
+\title{Math Formulation: Constraining a Hacked Reward ---\\
+Gates, Aggregation, and Why In-Loop Alerts Fail}
+\author{S Hariharan, J Shrenik Reddy, Ansa N}
+\date{}
+
+\begin{document}
+\maketitle
+
+\noindent This continues from \texttt{open\_items.pdf}, which formalized
+the three items left open by the working draft. Section numbers continue
+from 10; equation numbers continue from (16). Where that document
+specified the \emph{algorithm}, this one specifies the \emph{constraints}
+added after the algorithm was found to be exploitable, and states
+precisely what each does and does not guarantee. Every claim marked
+``measured'' is reproduced in \texttt{documentation/reward\_hacking\_%
+investigation.md}.
+
+\section{The validity predicate as the place to spend a hard constraint}
+\label{sec:gate}
+
+Section 4 defined $\Valid(m)$ as RDKit sanitization success, and Eq.~5
+collapses invalid molecules to a flat reward $r_{\mathrm{inv}}$. Write the
+sanitization predicate as $\Valid_0(m)$ and generalize:
+\begin{equation}
+\Valid(m) \;=\; \Valid_0(m) \,\wedge\, \1\!\big[\,\mathrm{HAC}(m) \ge h_{\min}\,\big],
+\label{eq:gate}
+\end{equation}
+with $\mathrm{HAC}$ the heavy-atom count. Everything downstream is
+unchanged: gated molecules take $r_{\mathrm{inv}}$ and the hurdle
+advantage floor of Section 9, exactly as a valence violation does.
+
+\paragraph{Why a gate and not a term.} Two arguments, and they are
+different. First, \emph{monotonicity}: any reward term increasing in
+molecular size has its optimum at unbounded size, so a soft size reward is
+hackable in the opposite direction. A hinge $\max(0, h_{\min}-\mathrm{HAC})$
+avoids that, but---second---\emph{gradient conditioning}: a term intended
+to drive the reward to zero must approach zero, and under the
+multiplicative aggregation of Section~\ref{sec:geom} the sensitivity
+$\partial G/\partial S_k \propto G/S_k$ diverges there. Eq.~\eqref{eq:gate}
+has no gradient to climb and none to explode. The constraint is spent
+where it is free.
+
+\paragraph{The cost, and the condition under which it is not free.}
+Gating removes candidates from the group. Writing $n_k$ for the number of
+valid molecules at step $k$, Section 9 established that the group-relative
+advantage carries no information when $n_k < 2$, and returns exactly zero.
+So Eq.~\eqref{eq:gate} is safe only while
+\begin{equation}
+\Pr\big[\,n_k \ge 2\,\big] \approx 1 ,
+\label{eq:starvation}
+\end{equation}
+which must be monitored rather than assumed. Measured at $h_{\min}=10$ and
+$N=64$: $n_k \in [61,62]$ on average, and the gated fraction falls from
+$\approx 9\%$ at initialization to $2$--$4\%$ by step 150. That decline is
+the diagnostic signature of a hard gate: the policy learns to avoid it
+rather than paying it repeatedly, which a soft penalty would not produce.
+
+\section{Multiplicative aggregation}
+\label{sec:geom}
+
+Eq.~5 aggregates the reward terms linearly. A weighted sum permits
+compensation: a term at its maximum can outbid another near its minimum,
+which is precisely how a molecule scoring $C=0.999$ and $\mathrm{QED}=0.47$
+outranks one scoring $C=0.811$ and $\mathrm{QED}=0.54$. Replace the sum
+with a weighted geometric mean over terms $S_k \in [0,1]$:
+\begin{equation}
+G(m) \;=\; \Big(\textstyle\prod_k S_k(m)^{\,w_k}\Big)^{1/\sum_k w_k}
+\;=\; \exp\!\Big(\tfrac{1}{\sum_k w_k}\textstyle\sum_k w_k \log S_k(m)\Big).
+\label{eq:geom}
+\end{equation}
+The right-hand form is what should be implemented: it is stable, and it
+makes the failure mode explicit, since $\log S_k \to -\infty$ as
+$S_k \to 0$. Clipping $S_k$ to $[\varepsilon, 1]$ bounds both the value and
+the sensitivity.
+
+Two properties follow, and only the first is usually stated.
+\begin{enumerate}[nosep]
+  \item \textbf{Veto.} $G \to 0$ if any $S_k \to 0$, regardless of the
+  others. This is the intended behaviour.
+  \item \textbf{Dilution.} The exponent $w_k / \sum_j w_j$ attenuates every
+  factor. A term contributing $S_k$ changes $G$ by $S_k^{w_k/\sum w}$,
+  so with five equally weighted terms a factor of $0.55$ becomes $0.89$.
+  A penalty calibrated on $S_k$ in isolation will therefore be far weaker
+  in aggregate than intended, and must be calibrated on its exponentiated
+  contribution instead.
+\end{enumerate}
+Property 2 is why Section~\ref{sec:gate} is a gate rather than a factor:
+a veto expressed multiplicatively is diluted, a veto expressed through
+$\Valid$ is not.
+
+\paragraph{Scale compatibility.} Eq.~\eqref{eq:geom} requires
+$S_k \in [0,1]$. Any monotone recalibration of a term that leaves that
+interval---such as a logit transform centred on a reference mean, which is
+negative below it---is incompatible, and the incompatibility is structural
+rather than data-dependent: whether a negative value appears in a given
+group is a property of the sample, not of the configuration.
+
+\section{Why an in-loop substructure penalty does not generalize}
+\label{sec:goodhart}
+
+Let $\mathcal{A}$ be a finite set of substructure patterns and
+\begin{equation}
+N_{\mathcal{A}}(m) \;=\; \sum_{a \in \mathcal{A}} \1\big[\,a \sqsubseteq m\,\big],
+\qquad
+S_{\mathcal{A}}(m) \;=\; e^{-\lambda N_{\mathcal{A}}(m)},
+\label{eq:alert}
+\end{equation}
+with $a \sqsubseteq m$ denoting a substructure match. Adding
+$S_{\mathcal{A}}$ to Eq.~\eqref{eq:geom} penalizes members of $\mathcal{A}$
+and \emph{nothing else}.
+
+This is the crux. The quantity of interest is chemical reactivity, call it
+$R^\star(m)$, which is unobserved. $N_{\mathcal{A}}$ is a proxy, and the
+policy optimizes the proxy. Because $\mathcal{A}$ is finite and the space
+of reactive motifs is not, there exist molecules with
+$N_{\mathcal{A}}(m)=0$ and $R^\star(m)$ large, and the optimizer has a
+gradient toward exactly those. Formally, optimizing $S_{\mathcal{A}}$
+reduces $\E[N_{\mathcal{A}}]$ under $\pi_\theta$ with no implication for
+$\E[R^\star]$ --- the two are related only through whatever correlation
+$\mathcal{A}$ happens to carry, and the optimization is free to destroy it.
+
+\paragraph{The held-out instrument criterion.} Since $R^\star$ is
+unobservable, the only available test is a second pattern set
+$\mathcal{B}$ with $\mathcal{B} \cap \mathcal{A} = \emptyset$, never used
+in training. An intervention is credited only if
+\begin{equation}
+\E_{\pi_\theta}\big[N_{\mathcal{B}}\big] \;<\;
+\E_{\pi_{\theta_{\mathrm{base}}}}\big[N_{\mathcal{B}}\big]
+\label{eq:heldout}
+\end{equation}
+by a margin exceeding the seed-to-seed variation of $N_{\mathcal{B}}$.
+Measured at $\lambda=0.3$, $w_{\mathcal{A}}=3$: the trained-against rate
+fell $0.339 \to 0.203$ while BRENK moved $0.438 \to 0.406$ and
+BRENK$+$PAINS$+$NIH $0.464 \to 0.427$, both within seed noise. Eq.~%
+\eqref{eq:heldout} is not satisfied.
+
+\paragraph{Corollary.} Training against $\mathcal{A} \cup \mathcal{B}$ to
+close the gap is self-defeating: it leaves no set disjoint from the
+training signal, so Eq.~\eqref{eq:heldout} becomes uncomputable and the
+failure becomes undetectable rather than absent. At least one instrument
+must be permanently withheld.
+
+\section{Post-hoc selection as a distinct operator}
+\label{sec:postfilter}
+
+The argument of Section~\ref{sec:goodhart} turns on $\mathcal{A}$ entering
+the objective. It therefore does not apply to a filter applied after
+training. Let $\pi_\theta$ be the trained policy and define the selection
+operator
+\begin{equation}
+\mathcal{F}\big[\pi_\theta\big](m) \;=\;
+\frac{\pi_\theta(m)\,\1\big[\,N_{\mathcal{A}\cup\mathcal{B}}(m) = 0\,\big]}
+     {\Pr_{\pi_\theta}\!\big[N_{\mathcal{A}\cup\mathcal{B}} = 0\big]},
+\label{eq:postfilter}
+\end{equation}
+the policy conditioned on passing the union of every available instrument.
+Since $\theta$ is fixed when $\mathcal{F}$ is applied, no gradient and no
+reward reaches $\mathcal{A} \cup \mathcal{B}$, and the union may be used
+in full --- the constraint of Section~\ref{sec:goodhart} is lifted exactly
+because nothing is being trained.
+
+What Eq.~\eqref{eq:postfilter} buys and what it does not:
+\begin{enumerate}[nosep]
+  \item It is not gameable, by construction.
+  \item It does not change $\pi_\theta$. The generator remains as reactive
+  as before; the denominator is the yield, measured at $0.40$.
+  \item It is not a safety guarantee. $\Pr[N=0]$ is bounded below $1$ even
+  for approved drugs --- measured, $39\%$ of the BBB$+$ molecules in BBBP
+  fail the same union --- so the predicate is neither necessary nor
+  sufficient for safety, only for the absence of \emph{recognized} motifs.
+\end{enumerate}
+
+\section{A stopping criterion from the reward's own uncertainty}
+\label{sec:snr}
+
+Section 10.3 tracked $\mathrm{Var}_i[D_{\phi_k}(m_i)]$ as a diagnostic for
+the discriminator. The frozen classifier admits a sharper statement,
+because its uncertainty can be estimated directly.
+
+Let $\ell(m) = \operatorname{logit} C(m)$ and let $\tilde{C}^{(1)},\dots,
+\tilde{C}^{(K)}$ be $K$ stochastic forward passes with dropout active and
+normalization layers held in inference mode --- the latter being required,
+or $C$ ceases to be a function of $m$ alone and the stationarity argument
+of Section 3.1 fails. Define
+\begin{equation}
+\sigma_{\mathrm{sig}}(k)^2 = \mathrm{Var}_{i \in \mathcal{G}_k}\big[\bar\ell(m_i)\big],
+\qquad
+\sigma_{\mathrm{noise}}(k)^2 = \E_{i \in \mathcal{G}_k}\big[\mathrm{Var}_j\,\tilde\ell^{(j)}(m_i)\big],
+\label{eq:snrdef}
+\end{equation}
+the between-molecule spread of the consensus logit and the mean
+within-molecule spread across dropout samples, over group $\mathcal{G}_k$.
+The first is what the group-relative advantage ranks on; the second is the
+model's own epistemic uncertainty about each ranking. Their ratio
+\begin{equation}
+\mathrm{SNR}(k) \;=\; \sigma_{\mathrm{sig}}(k) \,/\, \sigma_{\mathrm{noise}}(k)
+\label{eq:snr}
+\end{equation}
+is therefore the quantity that decides whether the reward is still
+informative. When $\mathrm{SNR}(k) < 1$ the differences the advantage ranks
+on are smaller than the classifier's uncertainty about them, and further
+optimization against $C$ pursues noise.
+
+Measured on the baseline: $\mathrm{SNR}$ falls $2.52 \to 1.24 \to 0.42$ at
+steps $0$, $100$, $199$, crossing $1$ between steps 100 and 150 --- the
+same interval over which scaffold diversity collapses.
+
+\paragraph{Two consequences.} First, $\sigma_{\mathrm{noise}}$ is
+approximately constant in $k$ (measured: $0.90$--$0.98$ throughout) while
+$\sigma_{\mathrm{sig}}$ falls by $5.5\times$, so Eq.~\eqref{eq:snr} is
+driven almost entirely by signal loss rather than by the model becoming
+less certain. Second, the apparent saturation of $C$ in probability space
+is an artifact of the sigmoid: the same MC-dropout spread is flat on the
+logit scale ($0.86$ on real molecules, $0.99$ on collapsed samples) while
+appearing to shrink $3.6\times$ in probability. A recalibration therefore
+restores $\sigma_{\mathrm{sig}}$ but leaves $\sigma_{\mathrm{noise}}$
+untouched --- it makes the reward legible, not more informative, and
+Eq.~\eqref{eq:snr} is the statement of that distinction.
+
+\section{What none of this addresses}
+\label{sec:residual}
+
+Each constraint above narrows the policy's access to a particular
+exploit. None changes the objective. Writing $y(m)$ for the BBBP label,
+the classifier estimates
+\begin{equation}
+C(m) \;\approx\; \Pr\big[\,y(m) = 1 \,\big]
+\;=\; \Pr\big[\,m \text{ crosses the blood--brain barrier}\,\big],
+\end{equation}
+which is a statement about transport and carries no term for therapeutic
+intent. The training set is consistent with that reading: of the 65
+molecules with $\mathrm{HAC} \le 8$ in BBBP, 62 are labelled positive, and
+they include chloroform, dichloromethane, bromoform and nitrous oxide.
+Carbon tetrachloride is therefore not an extrapolation failure of $C$ but
+an interpolation between positive training examples, and $C$ is correct
+about the only question it was asked.
+
+Any constraint added to Eq.~5 is a counterweight to that objective rather
+than a correction of it. Five have now been tested --- property-distribution
+distance, applicability domain, Tox21 activity, in-loop substructure
+alerts, and multiplicative aggregation --- and only the size gate and
+post-hoc selection survive their own validation. The remaining
+intervention that acts on the objective itself is curation of the label
+set, and it has not been attempted.
+
+\end{document}

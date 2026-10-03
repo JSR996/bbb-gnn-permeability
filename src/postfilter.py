@@ -84,6 +84,35 @@ def pool_samples(run_dirs: list[Path], from_step: int = 120) -> list[str]:
     return list(seen)
 
 
+def structural_problems(mol: Chem.Mol) -> list[str]:
+    """Defects RDKit sanitization accepts but a chemist would not.
+
+    Added because the candidate list was wrong without it. 7.7% of
+    survivors, and 16.4% of those with >=25 heavy atoms, carried radical or
+    carbene centres -- [C] and [CH] parse, sanitize, pass the size gate and
+    trip no substructure catalogue, so they reached the ranked output. They
+    are also enriched exactly where nearest-neighbour similarity is lowest,
+    so ranking by novelty surfaced them first: three of the twelve most
+    distant large molecules were radicals.
+
+    This is a validity check, not a liability filter, which is why it is
+    separate from the alert catalogues.
+    """
+    bad = []
+    if any(a.GetNumRadicalElectrons() for a in mol.GetAtoms()):
+        bad.append("radical")
+    if any(a.GetFormalCharge() for a in mol.GetAtoms()):
+        # Net-neutral zwitterions are fine; a lone uncompensated charge on a
+        # generated structure is usually a decoding artifact.
+        if Chem.GetFormalCharge(mol) != 0:
+            bad.append("net_charge")
+    # A generated SMILES can request a ring the geometry cannot close;
+    # embedding failure is the cheapest available proxy for that.
+    if mol.GetRingInfo().NumRings() and not mol.GetRingInfo().AtomRings():
+        bad.append("ring_perception_failed")
+    return bad
+
+
 def screen(smiles: list[str], min_heavy_atoms: int = 10) -> pd.DataFrame:
     """One row per molecule with every rejection reason, not just the first.
 
@@ -99,14 +128,17 @@ def screen(smiles: list[str], min_heavy_atoms: int = 10) -> pd.DataFrame:
             continue
         cat_hits = [e.GetDescription() for e in cat.GetMatches(m)]
         targeted = alert_names(m)
+        structural = structural_problems(m)
         hv = m.GetNumHeavyAtoms()
         rows.append({
             "smiles": s, "heavy_atoms": hv, "mw": Descriptors.MolWt(m),
             "qed": QED.qed(m),
             "n_targeted": len(targeted), "n_catalogue": len(cat_hits),
             "alerts": "|".join(sorted(set(targeted + cat_hits))),
+            "structural": "|".join(structural),
             "undersized": hv < min_heavy_atoms,
-            "passes": hv >= min_heavy_atoms and not cat_hits and not targeted,
+            "passes": (hv >= min_heavy_atoms and not cat_hits
+                       and not targeted and not structural),
         })
     return pd.DataFrame(rows)
 
@@ -158,6 +190,7 @@ def report(df: pd.DataFrame, top: int = 25) -> pd.DataFrame:
     print("=" * 74)
     print(f"  pooled, deduplicated : {total}")
     print(f"  undersized           : {int(df.undersized.sum())}")
+    print(f"  structural defect    : {int((df.structural != '').sum())}")
     print(f"  targeted alert       : {int((df.n_targeted > 0).sum())}")
     print(f"  catalogue alert      : {int((df.n_catalogue > 0).sum())}")
     print(f"  already in training  : {int(df.in_training_set.sum())}")
@@ -222,3 +255,35 @@ if __name__ == "__main__":
     args = ap.parse_args()
     main(args.run_dirs, args.from_step, args.out, args.dataset, args.device,
          args.min_heavy_atoms, args.top)
+
+
+def sample_batches(checkpoints: list[Path], n_batches: int, group_size: int,
+                   out_dir: Path, seed: int, device: str = "cpu") -> int:
+    """Draw fresh groups from trained checkpoints at FIXED theta.
+
+    Sampling, not further training. More steps was measured to be actively
+    harmful -- scaffold diversity collapses 0.80 -> 0.07 by step 200 and the
+    classifier's signal-to-noise crosses 1 between steps 100 and 150 -- so
+    the candidate pool is widened by drawing more from a good policy rather
+    than by optimizing a good policy into a worse one.
+
+    The seed is an explicit integer per checkpoint. The first bulk run used
+    `hash(path) % 2**31`, and Python randomizes string hashing per process
+    unless PYTHONHASHSEED is set, so those 450 batches are not reproducible
+    and had to be committed as data.
+    """
+    import torch
+
+    from .generator import SelfiesGenerator
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    k = 0
+    for ci, ck in enumerate(checkpoints):
+        torch.manual_seed(seed + 1000 * ci)
+        gen = SelfiesGenerator.load(Path(ck) / "bbbp_grpo.pt", device)
+        for _ in range(n_batches):
+            smi = gen.sample(group_size, device=device)["smiles"]
+            (out_dir / f"step{k:04d}.json").write_text(
+                json.dumps([x for x in smi if x]))
+            k += 1
+    return k

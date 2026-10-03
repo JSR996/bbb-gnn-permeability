@@ -15,7 +15,7 @@ after any subset of the training scripts, not just after everything):
     results/hybrid/hybrid_runs.csv                 <- src/train_hybrid.py (gcn/sage/gin/gat + descriptors)
     results/dmpnn/dmpnn_runs.csv                   <- src/train_dmpnn.py
 
-    gine_ablation_results.csv (repo root, if you haven't re-run gine under
+    results/edge_ablation/legacy_gine_ablation_results.csv (, if you haven't re-run gine under
     train_edge.py yet) is picked up too, but a row for the same
     (dataset, model=gine) in edge_ablation_runs.csv takes priority since
     it's the more recent, identically-protocoled run.
@@ -40,7 +40,7 @@ METRICS = ["test_roc_auc", "test_pr_auc", "test_balanced_accuracy", "test_f1", "
 SOURCES = [
     ("base_gnn", ROOT / "results" / "all_runs.csv", "gnn"),
     ("edge_ablation", ROOT / "results" / "edge_ablation" / "edge_ablation_runs.csv", "gnn"),
-    ("gine_ablation_legacy", ROOT / "gine_ablation_results.csv", "gnn"),
+    ("gine_ablation_legacy", ROOT / "results" / "edge_ablation" / "legacy_gine_ablation_results.csv", "gnn"),
     ("hybrid", ROOT / "results" / "hybrid" / "hybrid_runs.csv", "gnn"),
     ("dmpnn", ROOT / "results" / "dmpnn" / "dmpnn_runs.csv", "gnn"),
     ("descriptor_gbm", ROOT / "results" / "descriptor_baseline_v2_runs.csv", "descriptor"),

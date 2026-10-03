@@ -1,69 +1,161 @@
 # BBB Permeability Prediction with Graph Neural Networks
 
-Binary classification of blood–brain-barrier permeability from SMILES alone.
-Four message-passing architectures — **GCN**, **GraphSAGE**, **GIN**, **GAT** —
-are compared on two datasets under a scaffold split, then combined into ensembles.
+Binary classification of blood–brain-barrier (BBB) permeability from molecular
+structure, plus a molecule-generation experiment that uses the trained
+classifiers as a reward.
 
 ```
 SMILES → RDKit molecular graph → GNN → P(BBB permeable)
 ```
 
-The only input feature is the SMILES string. No descriptors, no fingerprints —
-every feature the models see is derived from the RDKit molecular graph.
+**Scope.** The core comparison — **GCN, GraphSAGE, GIN, GAT** — uses *only*
+features derived from the RDKit molecular graph (39-dim atom features; no
+descriptors, no fingerprints). The repo also contains four extensions, each
+kept separate so the core comparison stays clean:
+
+| family | what it adds | code |
+|---|---|---|
+| **base** | the four operators, identical skeleton | `src/models.py`, `src/train.py` |
+| **edge ablation** | bond features via `gine`, `gat_edge`, `sage_edge` | `src/models_edge.py`, `src/train_edge.py` |
+| **D-MPNN** | Chemprop-style directed bond-level message passing | `src/models_dmpnn.py`, `src/train_dmpnn.py` |
+| **hybrid** | graph embedding **+ 8 RDKit descriptors** (incl. a CNS-MPO proxy) | `src/models_hybrid.py`, `src/hybrid_features.py`, `src/train_hybrid.py` |
+| **descriptor baseline** | LightGBM on the same descriptors, same scaffold folds | `baselines/descriptor_baseline_v2.py` |
+
+> The hybrid family **does** use hand-crafted descriptors. The "no descriptors"
+> statement applies to the base, edge and D-MPNN families only.
+
+## Results at a glance
+
+Test ROC-AUC, mean ± std over 3 seeds. **Each seed is a different scaffold
+split**, so ± includes split variance, not just initialization variance. Full
+tables, with PR-AUC / balanced accuracy / F1 / MCC, are in
+[`results/master_comparison.csv`](results/master_comparison.csv)
+(regenerate with `python -m src.collect_all`).
+
+| family (best member) | BBBP | B3DB |
+|---|---|---|
+| descriptor baseline (LightGBM) | 0.904 ± 0.036 | 0.857 ± 0.002 |
+| base GNN (best of GCN/SAGE/GIN/GAT) | 0.936 ± 0.015 (GCN) | 0.891 ± 0.004 (SAGE) |
+| edge ablation (GINE) | 0.940 ± 0.002 | 0.891 ± 0.007 |
+| D-MPNN | 0.943 ± 0.007 | 0.889 ± 0.010 |
+| ensemble of the 4 base GNNs | 0.940 ± 0.026 (soft vote) | 0.898 ± 0.004 (stacking) |
+| hybrid GNN + descriptors | **0.961 ± 0.014** (GAT) | **0.902 ± 0.006** (SAGE) |
+
+How to read this:
+
+- **Differences among the four base operators are within seed noise** (BBBP std
+  reaches 0.045). Use `python -m src.paired_analysis` before claiming any
+  architecture ranking.
+- Edge features and D-MPNN give no consistent gain over the plain GNNs.
+- Ensembling gains (~0.003–0.006 over the best single model) are also inside
+  the noise.
+- The hybrid family is the strongest **in-distribution**. That advantage does
+  **not** transfer cleanly to the external holdouts (below).
+- Absolute numbers are **not comparable** to the 0.65–0.70 BBBP scaffold
+  figures in the literature; see "The scaffold split is balanced" below.
+
+### External holdout (Adenot, Wang)
+
+Every checkpoint (72 total) was also scored on two external sets that were
+filtered to be scaffold-disjoint from **both** BBBP and B3DB. The leak filter
+removes **~96.5%** of each source, leaving only **59 molecules (Adenot)** and
+**55 molecules (Wang)** — see `data/external_holdout/leak_report.json`.
+
+- **Adenot** is saturated: every model scores ROC-AUC 0.983–1.000, so it cannot
+  discriminate between architectures.
+- **Wang** is the informative set: ROC-AUC 0.795–0.898, MCC 0.40–0.61.
+- On Wang the hybrid advantage is inconsistent (e.g. base SAGE/BBBP 0.898 vs
+  hybrid SAGE/BBBP 0.891; the reverse holds for GCN/B3DB).
+- At n ≈ 55–59, single-digit error counts swing MCC. Treat rankings as
+  suggestive; bootstrap CIs are still to do.
+
+Write-up: [`results/external_holdout_eval/FINDINGS.md`](results/external_holdout_eval/FINDINGS.md).
 
 ## Setup
 
 ```bash
-.venv/bin/pip install -r requirements.txt
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 PyTorch Geometric ≥ 2.3 uses `torch.scatter_reduce` natively, so the compiled
 `torch-scatter` / `torch-sparse` extensions are **not** required.
 
+Raw datasets live in `data/raw/` and are read from there by every module.
+
+## Repository layout
+
+```
+.
+├── data/
+│   ├── raw/                 BBBP.csv, B3DB_classification.tsv, Adenot_final.csv, Wang_final.csv, BBB.csv*
+│   ├── processed/           cached PyG graphs + cleaning reports (regenerate: python -m src.datasets)
+│   └── external_holdout/    leak-filtered Adenot/Wang sets + leak_report.json
+├── src/                     all library + CLI modules (table below)
+├── baselines/
+│   ├── descriptor_baseline_v2.py   LightGBM baseline on identical folds (current)
+│   └── legacy/                     first-draft baseline; folds do NOT match the GNN runs
+├── notebooks/results.ipynb  EDA, tables, ROC/PR curves
+├── results/                 per-run outputs, aggregated tables, committed checkpoints
+├── documentation/           design notes and diagrams (see "Further reading")
+└── requirements.txt
+```
+
+\* `BBB.csv` is not read by any module.
+
+| module | role |
+|---|---|
+| `featurize.py` | SMILES → PyG `Data`; 39-dim atom features, bond features stored |
+| `datasets.py` | load, clean, deduplicate, cache both datasets |
+| `split.py` | Bemis–Murcko scaffold split + leak assertions |
+| `models.py`, `train.py`, `run_all.py` | base four-operator comparison (4 × 2 × 3 = 24 runs) |
+| `evaluate.py` | metrics; threshold chosen on validation only |
+| `ensemble.py` | soft vote, rank average, logistic stacking (within-seed) |
+| `models_edge.py`, `train_edge.py` | edge-aware ablation (18 runs) |
+| `models_dmpnn.py`, `train_dmpnn.py` | D-MPNN (6 runs) |
+| `models_hybrid.py`, `hybrid_features.py`, `train_hybrid.py` | GNN + descriptor hybrid (24 runs) |
+| `external_holdout.py`, `eval_external_holdout.py` | build leak-free holdouts; score every checkpoint on them |
+| `paired_analysis.py` | paired-seed architecture comparison |
+| `collect_all.py` | merge every result table into `results/master_comparison.csv` |
+| `reward.py`, `grpo.py`, `generator.py`, `train_gan.py` | molecule generation (GRPO) |
+| `diversity.py`, `analyze_drift.py` | scaffold / Tanimoto / descriptor-drift diagnostics |
+| `classifier_ood.py`, `mc_dropout.py`, `kl_sweep.py` | is the reward trustworthy, and can KL hold back the collapse? |
+
 ## Running
 
 ```bash
-python -m src.featurize                              # featurizer smoke test
-python -m src.models                                 # forward-pass shape check
-python -m src.datasets                               # build caches, verify splits
-python -m src.train --model gcn --dataset bbbp --seed 0   # one run
-python -m src.run_all                                # all 24 runs
-python -m src.ensemble                               # combine predictions
-python -m src.reward                                 # reward terms + frozen classifier
-python -m src.grpo                                   # GRPO advantage + clipped loss
-jupyter lab notebooks/results.ipynb                  # tables and figures
+# --- smoke tests (no training) ---
+python -m src.featurize                    # featurizer
+python -m src.models                       # forward-pass shapes
+python -m src.datasets                     # build caches, verify splits
+
+# --- core comparison ---
+python -m src.train --model gcn --dataset bbbp --seed 0     # one run
+python -m src.run_all                      # all 24 runs
+python -m src.ensemble                     # combine predictions (within seed)
+
+# --- extensions ---
+python -m src.train_edge --run-all         # 18 runs: gine / gat_edge / sage_edge
+python -m src.train_dmpnn --run-all        # 6 runs
+python -m src.train_hybrid --run-all       # 24 runs
+python baselines/descriptor_baseline_v2.py # LightGBM baseline (no torch needed)
+
+# --- external evaluation + aggregation ---
+python -m src.external_holdout             # rebuild leak-free holdouts (RDKit only)
+python -m src.eval_external_holdout        # score all checkpoints on them
+python -m src.paired_analysis --all-sources
+python -m src.collect_all                  # -> results/master_comparison.csv
+
+# --- generation ---
+python -m src.generator --pretrain         # MLE warm start (~1 min on CPU)
+python -m src.train_gan --steps 200        # GRPO
+python -m src.reward && python -m src.grpo # self-checks
+
+jupyter lab notebooks/results.ipynb
 ```
 
 Runs default to CPU — these graphs are small enough that MPS kernel-launch
 overhead makes it slower. `--device mps` is available to test that.
-
-## Layout
-
-| path | role |
-|---|---|
-| `src/featurize.py` | SMILES → PyG `Data`; 39-dim atom features, bond features stored but unused |
-| `src/datasets.py` | load, clean, deduplicate, and cache both datasets |
-| `src/split.py` | Bemis–Murcko scaffold split + leak assertions |
-| `src/models.py` | one skeleton, four convolution operators |
-| `src/train.py` | one `(model, dataset, seed)` run |
-| `src/evaluate.py` | metrics; threshold chosen on validation only |
-| `src/run_all.py` | 4 models × 2 datasets × 3 seeds |
-| `src/ensemble.py` | soft vote, rank average, logistic stacking |
-| `src/models_edge.py` | edge-aware operators: `gine`, `gat_edge`, `sage_edge` |
-| `src/train_edge.py` | edge ablation runs; writes `results/edge_ablation/` |
-| `src/reward.py` | frozen-classifier reward for generation (Eq. 5–7) |
-| `src/grpo.py` | group-relative advantage and clipped surrogate (Eq. 6–7) |
-| `src/generator.py` | Case A generator: autoregressive SELFIES policy |
-| `src/train_gan.py` | outer GAN+GRPO loop |
-| `src/diversity.py` | scaffold / Tanimoto / descriptor-drift diagnostics |
-| `src/analyze_drift.py` | collapse trajectory plots and first-vs-last table |
-| `src/classifier_ood.py` | is the reward's classifier trustworthy off-distribution? |
-| `src/kl_sweep.py` | KL intervention sweep against a three-part criterion |
-| `src/paired_analysis.py` | paired-seed architecture comparison |
-| `notebooks/results.ipynb` | EDA, results tables, ROC/PR curves |
-
-Results land in `results/<dataset>/<model>/seed<N>/`, aggregated into
-`results/all_runs.csv` and `results/summary.csv`.
 
 ## Design decisions worth knowing
 
@@ -206,13 +298,15 @@ as `D` sharpens, that term's variance drifts relative to the fixed-variance `C`
 term, changing their effective weight on `A_i` even with `w_D, w_C` held
 literally constant.
 
-A 40-step smoke run (group 32, linear anneal over 30) moves mean predicted
-permeability from 0.81 to 0.96 at 100% validity with 186/199 distinct samples,
-so nothing collapsed — but the surviving scaffolds drift visibly toward
-aromatic, lipophilic ring systems. That is the expected reward-hacking
-direction for a BBB objective and is what the `QED`/`SA` terms and the
-reference-policy KL are there to hold back; it is worth watching rather than
-assuming it is held.
+**Reward hacking is real, not hypothetical.** An early 40-step smoke run looked
+healthy (mean predicted permeability 0.81 → 0.96, 100% validity). Longer runs
+show the opposite: over 200 steps, in all 3 seeds, scaffold diversity falls
+from ~0.8 to 0.07–0.14, the spread of the classifier term collapses, and
+~100% of generated molecules score above 0.95 — while validity stays at 100%
+and the old `unique SMILES` metric lags the true collapse by 88–154 steps.
+Of the four KL coefficients swept (0.02, 0.1, 0.3, 1.0), only 0.3 and 1.0 meet
+the sweep's retention criterion, and with small reward gain. Full analysis:
+`documentation/reward_hacking_investigation.md`.
 
 **The reward is zero-inflated, so the advantage is a two-part estimator.**
 `assemble` sends invalid molecules to a flat penalty and valid ones to a
@@ -250,7 +344,34 @@ loudly:
   log-probability difference, *before* the exponential; masking the ratio
   afterwards cannot recover it.
 
-## Data cleaning
+## Data
+
+### Raw files (`data/raw/`)
+
+| file | used by | notes |
+|---|---|---|
+| `BBBP.csv` | training; holdout leak filter | label column `p_np`; ordered so its back half is all class 1 |
+| `B3DB_classification.tsv` | training; holdout leak filter | aggregates BBBP among its sources |
+| `Adenot_final.csv`, `Wang_final.csv` | `src/external_holdout.py` | external sets; **never used for training** |
+| `BBB.csv` | — | not read by any module |
+
+Processed caches and cleaning reports are in `data/processed/` and can be
+rebuilt with `python -m src.datasets`.
+
+### External holdouts
+
+`src/external_holdout.py` removes every external molecule that (a) matches a
+training molecule by canonical SMILES, or (b) shares a Bemis–Murcko scaffold
+with one, then drops whole scaffold groups. That is deliberately strict.
+
+| source | rows in | direct overlap | scaffold groups tainted | rows out (pos / neg) |
+|---|---|---|---|---|
+| Adenot | 1650 | 1559 | 810 | **59** (15 / 44) |
+| Wang | 1592 | 1469 | 761 | **55** (38 / 17) |
+
+The surviving sets are small. See "Known limitations".
+
+### Cleaning (BBBP, B3DB)
 
 | | rows in | invalid SMILES | dupes merged | label conflicts | rows out |
 |---|---|---|---|---|---|
@@ -259,3 +380,35 @@ loudly:
 
 Deduplication is on the *canonical* SMILES, not the raw string. Molecules whose
 duplicate copies disagree on the label are dropped entirely rather than guessed.
+
+## Known limitations
+
+- **Three seeds.** Seed-to-seed std is large on BBBP; most architecture
+  differences are not distinguishable from noise. More seeds and paired
+  bootstrap CIs are needed before ranking models.
+- **Tiny external holdouts** (n = 55–59). Adenot is saturated and uninformative;
+  Wang results swing on single-digit error counts.
+- **Hybrid model uses descriptors**, including a CNS-MPO *proxy* (5 of 6 terms;
+  CLogD is proxied by CLogP and the pKa term is omitted).
+- **Fixed 0.5 threshold for stacking.** Single models and soft-vote/rank-average
+  use a validation-tuned Youden threshold; the logistic stacker does not, so
+  F1/MCC are not directly comparable across ensemble methods. ROC-AUC is.
+- **The generator does not yet produce validated molecules.** Under the current
+  reward it hacks the classifier (above). Treat generated molecules as
+  unvalidated.
+- **Domain bias.** BBBP and the external sets contain many charged / β-lactam
+  compounds that are easy negatives, which inflates headline AUC.
+- **Committed artifacts are large** (`data/processed/*.pt`, model checkpoints
+  under `results/`); a Git LFS migration would shrink clones.
+- **No license file** has been added; the repository owner needs to choose one.
+
+## Further reading (`documentation/`)
+
+| file | contents |
+|---|---|
+| `reward_hacking_investigation.md` | how the collapse was found, measured and diagnosed |
+| `cold_and_warm_start.md` | why the generator uses an MLE warm start and a two-part advantage |
+| `open_items.pdf` / `.tex` | formalization of the open items |
+| `bbp.pdf` | background reference |
+| `mermaid-diagram-*.png` | architecture / pipeline diagrams |
+| `BBB_Tools*.png` | reference table of online SMILES-based BBB/ADME tools (excerpted from a published source; not used by code) |

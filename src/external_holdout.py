@@ -60,14 +60,14 @@ RDLogger.DisableLog("rdApp.*")
 ROOT = Path(__file__).resolve().parent.parent
 
 EXTERNAL_SOURCES = {
-    "adenot": dict(path=ROOT / "Adenot_final.csv", smiles_col="smiles", label_col="BBB"),
-    "wang": dict(path=ROOT / "Wang_final.csv", smiles_col="smiles", label_col="BBB"),
+    "adenot": dict(path=ROOT / "data" / "raw" / "Adenot_final.csv", smiles_col="smiles", label_col="BBB"),
+    "wang": dict(path=ROOT / "data" / "raw" / "Wang_final.csv", smiles_col="smiles", label_col="BBB"),
 }
 
 # Training-pool datasets, same loader config as src/datasets.py::DATASETS.
 TRAINING_SOURCES = {
-    "bbbp": dict(path=ROOT / "BBBP.csv", sep=",", smiles_col="smiles", label_col="p_np"),
-    "b3db": dict(path=ROOT / "B3DB_classification.tsv", sep="\t",
+    "bbbp": dict(path=ROOT / "data" / "raw" / "BBBP.csv", sep=",", smiles_col="smiles", label_col="p_np"),
+    "b3db": dict(path=ROOT / "data" / "raw" / "B3DB_classification.tsv", sep="\t",
                  smiles_col="SMILES", label_col="BBB+/BBB-"),
 }
 
@@ -161,7 +161,7 @@ def build_clean_holdout(source_name: str, train_dataset_names: list[str],
     if verbose:
         print(f"[{source_name}] external holdout vs. training pool {train_dataset_names}")
         print(f"  rows in                          : {report['rows_in']}")
-        print(f"  invalid SMILES                   : -{invalid}")
+        print(f"  invalid SMILES                   : {invalid}")
         print(f"  direct canonical-SMILES overlap  : {report['direct_overlap_molecules']}")
         print(f"  scaffold groups tainted           : {len(tainted_scaffolds)} "
               f"(+{group_dropped_extra} extra molecules pulled in with their group)")

@@ -20,14 +20,14 @@ PROCESSED_DIR = ROOT / "data" / "processed"
 
 DATASETS = {
     "bbbp": {
-        "path": ROOT / "BBBP.csv",
+        "path": ROOT / "data" / "raw" / "BBBP.csv",
         "sep": ",",
         "smiles_col": "smiles",
         "label_col": "p_np",
         "label_map": None,  # already 0/1
     },
     "b3db": {
-        "path": ROOT / "B3DB_classification.tsv",
+        "path": ROOT / "data" / "raw" / "B3DB_classification.tsv",
         "sep": "\t",
         "smiles_col": "SMILES",
         "label_col": "BBB+/BBB-",

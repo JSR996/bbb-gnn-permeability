@@ -282,7 +282,7 @@ def main(dataset: str, seed: int, device: str, gen_path: Path) -> None:
     print("UNLABELED OOD -- disagreement on generated molecules (no ground truth)")
     print("=" * 78)
     gen = json.load(open(gen_path))
-    real = pd.read_csv(ROOT / "BBBP.csv")["smiles"].dropna().tolist()
+    real = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv")["smiles"].dropna().tolist()
     unl = unlabeled_ood(current, candidate, gen, real)
     print(unl.round(4).to_string(index=False))
     print("\n  member_sd measures INSTABILITY, not error. Nothing here says")

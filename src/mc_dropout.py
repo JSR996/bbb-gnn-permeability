@@ -225,7 +225,7 @@ def main(dataset: str, seed: int, k: int, device: str, n_real: int) -> None:
     nets = load_members(dataset, seed, device)
     print(f"loaded {list(nets)}  (K={k} stochastic passes each)")
 
-    real = pd.read_csv(ROOT / "BBBP.csv")["smiles"].dropna().tolist()
+    real = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv")["smiles"].dropna().tolist()
     rng = np.random.default_rng(0)
     real = [real[i] for i in rng.choice(len(real), min(n_real, len(real)), replace=False)]
 

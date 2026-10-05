@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -317,6 +318,19 @@ def train(
             "aggregate": aggregate, "alert_lambda": alert_lambda,
             "w_alert": w_alert,
             "c_transform": c_transform, "drop": list(drop),
+            # Thread count is part of the configuration, not of the machine.
+            # OpenMP changes the order of float reductions, and this training
+            # loop is chaotic: a run that reproduces to 2e-16 at a matching
+            # thread count diverges to ~3e-03 in 20 steps at a different one,
+            # which is larger than the effects the ablation measures. Without
+            # this field a cross-thread comparison is indistinguishable from a
+            # valid one, so --check-baseline can only report THAT a run
+            # diverged, never why. torch.get_num_threads() is the value that
+            # actually bound; the env vars are recorded because they are what
+            # a caller sets to reproduce it.
+            "torch_num_threads": torch.get_num_threads(),
+            "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
+            "mkl_num_threads": os.environ.get("MKL_NUM_THREADS"),
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -440,7 +454,7 @@ if __name__ == "__main__":
               seed=args.seed, out_dir=out, c_transform=args.c_transform,
               w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
               min_mw=args.min_mw, aggregate=args.aggregate,
-              alert_lambda=args.alert_lambda, w_alert=args.w_alert)
+              alert_lambda=args.alert_lambda, w_alert=args.w_alert,
               drop=tuple(t for t in args.drop.split(",") if t))
     else:
         _self_check()

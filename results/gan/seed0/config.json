@@ -13,6 +13,11 @@
  "k_anneal": 100,
  "max_len": 72,
  "seed": 0,
+ "c_transform": "raw",
+ "drop": [],
+ "torch_num_threads": 6,
+ "omp_num_threads": "6",
+ "mkl_num_threads": "6",
  "reference_stats": {
   "tpsa": [
    70.72849926434527,

@@ -13,6 +13,8 @@
  "k_anneal": 100,
  "max_len": 72,
  "seed": 1,
+ "c_transform": "raw",
+ "drop": [],
  "reference_stats": {
   "tpsa": [
    70.72849926434527,

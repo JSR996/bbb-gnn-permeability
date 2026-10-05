@@ -1,0 +1,25 @@
+C:\Users\CSE_SDPL\AppData\Roaming\Python\Python312\site-packages\torch\jit\_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+step    0  R=+0.925  valid=95%  C=0.830  scaf=0.85  tan=0.918  tpsa=-0.17sd/0.68x  kl=0.0034
+step   10  R=+1.175  valid=100%  C=0.897  scaf=0.58  tan=0.846  tpsa=-0.80sd/0.30x  kl=0.2236
+step   20  R=+1.176  valid=100%  C=0.935  scaf=0.42  tan=0.812  tpsa=-1.03sd/0.22x  kl=0.3889
+step   30  R=+1.240  valid=100%  C=0.943  scaf=0.55  tan=0.826  tpsa=-0.97sd/0.27x  kl=0.3561
+step   40  R=+1.368  valid=100%  C=0.982  scaf=0.09  tan=0.774  tpsa=-1.02sd/0.26x  kl=0.3799
+step   50  R=+1.407  valid=100%  C=0.930  scaf=0.31  tan=0.770  tpsa=-0.68sd/0.34x  kl=0.4214
+step   60  R=+1.554  valid=100%  C=0.928  scaf=0.55  tan=0.868  tpsa=-0.62sd/0.48x  kl=0.2778
+step   70  R=+1.577  valid=97%  C=0.947  scaf=0.76  tan=0.814  tpsa=-0.98sd/0.21x  kl=0.3361
+step   80  R=+1.707  valid=98%  C=0.957  scaf=0.49  tan=0.811  tpsa=-1.05sd/0.15x  kl=0.2936
+step   90  R=+1.810  valid=98%  C=0.971  scaf=0.19  tan=0.798  tpsa=-0.91sd/0.18x  kl=0.4139
+step  100  R=+1.978  valid=100%  C=0.986  scaf=0.14  tan=0.757  tpsa=-0.78sd/0.29x  kl=0.4810
+step  110  R=+1.912  valid=100%  C=0.952  scaf=0.42  tan=0.804  tpsa=-0.44sd/0.52x  kl=0.4430
+step  120  R=+1.943  valid=100%  C=0.982  scaf=0.27  tan=0.716  tpsa=-0.97sd/0.23x  kl=0.6123
+step  130  R=+1.945  valid=100%  C=0.975  scaf=0.22  tan=0.675  tpsa=-1.12sd/0.17x  kl=0.5201
+step  140  R=+1.963  valid=100%  C=0.978  scaf=0.09  tan=0.349  tpsa=-1.17sd/0.12x  kl=0.6649
+step  150  R=+1.976  valid=100%  C=0.988  scaf=0.06  tan=0.251  tpsa=-1.20sd/0.05x  kl=0.4762
+step  160  R=+1.965  valid=100%  C=0.980  scaf=0.16  tan=0.379  tpsa=-1.15sd/0.17x  kl=0.5727
+step  170  R=+1.972  valid=100%  C=0.987  scaf=0.05  tan=0.247  tpsa=-1.20sd/0.06x  kl=0.5343
+step  180  R=+1.939  valid=98%  C=0.985  scaf=0.08  tan=0.222  tpsa=-1.17sd/0.19x  kl=0.5552
+step  190  R=+1.969  valid=100%  C=0.985  scaf=0.12  tan=0.394  tpsa=-1.07sd/0.36x  kl=0.5166
+step  199  R=+1.965  valid=100%  C=0.983  scaf=0.14  tan=0.485  tpsa=-1.09sd/0.28x  kl=0.5047
+
+wrote C:\Users\CSE_SDPL\Downloads\bioproject\results\term_ablation\drop_Q\seed0  (200/200 valid samples)

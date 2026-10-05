@@ -98,7 +98,30 @@ def check_baseline(n_steps: int, group_size: int, device: str,
     loop has drifted since those runs were made, the deltas measure the drift.
     Compare the first `n_steps` rows of a fresh default-config run.
     """
+    import json
+
+    import torch
+
     from .train_gan import train
+
+    # Check the thread count FIRST, because it is the most common cause of a
+    # divergence here and the one the numbers alone cannot distinguish from a
+    # code change. OpenMP reorders float reductions and this loop is chaotic,
+    # so a mismatched thread count reproduces to ~1e-09 at step 1 and ~1e-02
+    # by step 20 -- larger than the effects the ablation measures. Baselines
+    # written before this field was recorded carry None, which is unknown
+    # rather than equal, so say so instead of asserting a match.
+    cfg_path = base_dir(seed) / "config.json"
+    if cfg_path.exists():
+        cfg = json.loads(cfg_path.read_text())
+        was, now = cfg.get("torch_num_threads"), torch.get_num_threads()
+        if was is None:
+            print(f"  note: baseline predates thread recording; cannot verify "
+                  f"(running at {now})")
+        elif was != now:
+            print(f"  WARNING: baseline ran at {was} threads, this run at {now}. "
+                  f"A divergence below is expected and says nothing about the "
+                  f"code. Re-run with OMP_NUM_THREADS={was} MKL_NUM_THREADS={was}.")
 
     ref = pd.read_csv(base_dir(seed) / "history.csv").head(n_steps)
     tmp = ABL_DIR / "_baseline_check"

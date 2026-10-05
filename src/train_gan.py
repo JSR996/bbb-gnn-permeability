@@ -124,6 +124,7 @@ def train(
     aggregate: str = "linear",
     alert_lambda: float = 0.0,
     w_alert: float = 0.0,
+    drop: tuple[str, ...] = (),
     max_len: int = 72,
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
@@ -138,6 +139,10 @@ def train(
             f"advantage. Run it first: "
             f"python -m src.generator --pretrain --dataset {dataset}"
         )
+    bad = set(drop) - set(W0)
+    if bad or len(set(drop)) >= len(W0):
+        raise ValueError(f"drop must be a proper subset of {sorted(W0)}, got {drop}")
+
     # Seed every source of randomness that differs between replicate runs: the
     # torch RNG drives both sampling and D's init, and `rng` drives D's real
     # batches. Without this a "3-seed baseline" would be three identical runs.
@@ -191,6 +196,13 @@ def train(
                        k_anneal=k_anneal, valid_history=valid_history)
         rewards = assemble(terms, d_scores, w, c_transform=c_transform,
                            aggregate=aggregate)
+        w = weights_at(k, W0, WF, schedule=schedule, k_anneal=k_anneal,
+                       valid_history=valid_history)
+        # Ablation: zero the weight, keep computing the term. The term is still
+        # scored and logged (c_mean etc.), so what the classifier thinks of the
+        # generated molecules stays observable even when it no longer steers.
+        w = {key: (0.0 if key in drop else val) for key, val in w.items()}
+        rewards = assemble(terms, d_scores, w, c_transform=c_transform)
         # Hurdle form: the reward from `assemble` is zero-inflated by
         # construction, so the invalid molecules must not set the scale the
         # valid ones are ranked on (see group_advantages).
@@ -304,6 +316,7 @@ def train(
             "min_heavy_atoms": min_heavy_atoms, "min_mw": min_mw,
             "aggregate": aggregate, "alert_lambda": alert_lambda,
             "w_alert": w_alert,
+            "c_transform": c_transform, "drop": list(drop),
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -412,6 +425,8 @@ if __name__ == "__main__":
                     help="weight on the non-toxicity term (needs src.tox)")
     ap.add_argument("--c-transform", default="raw", choices=["raw", "logit"],
                     help="rescale the permeability term; see reward.transform_c")
+    ap.add_argument("--drop", default="",
+                    help="comma-separated reward terms to zero, from D,C,Q,S")
     ap.add_argument("--out-dir", default=None,
                     help="defaults to results/gan/seed<seed>")
     args = ap.parse_args()
@@ -426,5 +441,6 @@ if __name__ == "__main__":
               w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
               min_mw=args.min_mw, aggregate=args.aggregate,
               alert_lambda=args.alert_lambda, w_alert=args.w_alert)
+              drop=tuple(t for t in args.drop.split(",") if t))
     else:
         _self_check()

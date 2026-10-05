@@ -1,0 +1,22 @@
+# Exact versions this project was last verified against (2026-10, CPU).
+#
+# Pinned because the container starts empty and the toolchain is not
+# reproducible without it: this session's torch install had to come from
+# PyPI, since download.pytorch.org is denied by the environment's network
+# policy, and that cost ~20 minutes. numpy 2.x and pandas 3.x are both
+# recent majors, so an unpinned install is a live risk rather than a
+# theoretical one.
+#
+#   python -m pip install -r requirements.lock
+#
+# LaTeX, for documentation/*.tex, is not pip-installable:
+#   apt-get install -y --no-install-recommends texlive-latex-base \
+#       texlive-latex-recommended texlive-latex-extra   # enumitem
+matplotlib==3.11.2
+numpy==2.4.6
+pandas==3.0.6
+rdkit==2026.3.6
+scikit-learn==1.9.1
+selfies==2.2.0
+torch==2.14.0
+torch-geometric==2.8.0.post1

@@ -118,6 +118,12 @@ def train(
     schedule: str = "linear",
     k_anneal: int = 100,
     c_transform: str = "raw",
+    w_tox: float = 0.0,
+    min_heavy_atoms: int = 0,
+    min_mw: float = 0.0,
+    aggregate: str = "linear",
+    alert_lambda: float = 0.0,
+    w_alert: float = 0.0,
     max_len: int = 72,
     device: str = "cpu",
     out_dir: Path = OUT_DIR,
@@ -147,6 +153,13 @@ def train(
 
     disc = Discriminator().to(device)
     classify = load_frozen_classifier(dataset=dataset, device=device)
+    # Frozen exactly as the permeability classifier is. Loaded only when
+    # weighted, so a run without a toxicity model costs nothing and the
+    # term stays inert rather than absent.
+    toxic = None
+    if w_tox:
+        from .tox import load_frozen_tox
+        toxic = load_frozen_tox(device=device)
     real_pool = [s for s in _load_raw(dataset)["smiles"].dropna().tolist()]
 
     opt_g = torch.optim.Adam(gen.parameters(), lr=lr_g)
@@ -169,12 +182,15 @@ def train(
         roll = gen.sample(group_size, max_len=max_len, device=device)
 
         # --- 2. reward against a single frozen phi snapshot ------------------
-        terms = score_terms(roll["smiles"], classify)
+        terms = score_terms(roll["smiles"], classify, tox=toxic,
+                            min_heavy_atoms=min_heavy_atoms, min_mw=min_mw,
+                            alert_lambda=alert_lambda)
         d_scores = disc.score(roll["smiles"], device=device)
         valid_history.append(float(terms["valid"].mean()))
-        w = weights_at(k, W0, WF, schedule=schedule, k_anneal=k_anneal,
-                       valid_history=valid_history)
-        rewards = assemble(terms, d_scores, w, c_transform=c_transform)
+        w = weights_at(k, {**W0, "T": w_tox, "A": w_alert}, WF, schedule=schedule,
+                       k_anneal=k_anneal, valid_history=valid_history)
+        rewards = assemble(terms, d_scores, w, c_transform=c_transform,
+                           aggregate=aggregate)
         # Hurdle form: the reward from `assemble` is zero-inflated by
         # construction, so the invalid molecules must not set the scale the
         # valid ones are ranked on (see group_advantages).
@@ -220,6 +236,20 @@ def train(
             "valid_frac": valid_history[-1],
             "c_mean": float(terms["c"][terms["valid"]].mean()) if terms["valid"].any() else 0.0,
             "qed_mean": float(terms["qed"][terms["valid"]].mean()) if terms["valid"].any() else 0.0,
+            # Logged as PREDICTED TOXICITY (1 - t), because that is the
+            # quantity to watch rise; the reward carries its complement.
+            "tox_mean": float(1.0 - terms["t"][terms["valid"]].mean()) if terms["valid"].any() else 0.0,
+            # Group dilution: the size gate removes candidates, and a group
+            # left with fewer than two valid ones carries no ranking signal
+            # at all (group_advantages zeroes it). Logged separately from
+            # sanitization failures so a starved group is diagnosable rather
+            # than just quiet.
+            "undersized_frac": float(terms["undersized"].mean()),
+            # Mean distinct reactive-group alerts among valid molecules --
+            # the quantity this term exists to drive down.
+            "alerts_mean": float(-np.log(terms["a"][terms["valid"]]).mean()
+                                 / alert_lambda) if alert_lambda and terms["valid"].any() else 0.0,
+            "n_rankable": int(terms["valid"].sum()),
             # Section 3.3 diagnostic: as D sharpens, the variance of its term
             # drifts relative to the fixed-variance C term, changing their
             # effective weight on A_i even with w_D, w_C literally constant.
@@ -270,7 +300,10 @@ def train(
             "clip_eps": clip_eps, "kl_coef": kl_coef,
             "invalid_floor": invalid_floor, "schedule": schedule,
             "k_anneal": k_anneal, "max_len": max_len, "seed": seed,
-            "c_transform": c_transform,
+            "c_transform": c_transform, "w_tox": w_tox,
+            "min_heavy_atoms": min_heavy_atoms, "min_mw": min_mw,
+            "aggregate": aggregate, "alert_lambda": alert_lambda,
+            "w_alert": w_alert,
             "reference_stats": ref_stats,
         }, indent=1))
         sample = [s for s in gen.sample(200, device=device)["smiles"]
@@ -366,6 +399,17 @@ if __name__ == "__main__":
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--alert-lambda", type=float, default=0.0,
+                    help="decay rate for exp(-lambda*n_alerts); 0 disables")
+    ap.add_argument("--w-alert", type=float, default=0.0,
+                    help="weight on the alert term (see src/alerts.py)")
+    ap.add_argument("--min-heavy-atoms", type=int, default=0,
+                    help="gate out molecules below this heavy-atom count")
+    ap.add_argument("--min-mw", type=float, default=0.0)
+    ap.add_argument("--aggregate", default="linear",
+                    choices=["linear", "geometric"])
+    ap.add_argument("--w-tox", type=float, default=0.0,
+                    help="weight on the non-toxicity term (needs src.tox)")
     ap.add_argument("--c-transform", default="raw", choices=["raw", "logit"],
                     help="rescale the permeability term; see reward.transform_c")
     ap.add_argument("--out-dir", default=None,
@@ -378,6 +422,9 @@ if __name__ == "__main__":
               ppo_epochs=args.ppo_epochs, n_d=args.n_d, schedule=args.schedule,
               k_anneal=args.k_anneal, kl_coef=args.kl_coef,
               invalid_floor=args.invalid_floor, device=args.device,
-              seed=args.seed, out_dir=out, c_transform=args.c_transform)
+              seed=args.seed, out_dir=out, c_transform=args.c_transform,
+              w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
+              min_mw=args.min_mw, aggregate=args.aggregate,
+              alert_lambda=args.alert_lambda, w_alert=args.w_alert)
     else:
         _self_check()

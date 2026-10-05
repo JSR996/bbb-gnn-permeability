@@ -29,11 +29,25 @@ scaffold diversity to 0.828 ± 0.004 — above the warm start's 0.736 and far
 more stable than the ungated 0.769 ± 0.027 — for 0.004 of mean C, and cuts
 molecules under 10 heavy atoms from 10.4% to 2.1%.*
 
+*These are now the **defaults** (`kl_coef=0.3`, `min_heavy_atoms=10`), because
+leaving them opt-in meant the documented command reproduced the hack. At
+200 steps, seed 0: scaffold 0.055 → 0.838, Tanimoto 0.292 → 0.890, distinct
+pooled molecules 190 → 1267, for mean C 0.990 → 0.920.*
+
 **What remains.** The gate blocks one manifestation, not the mechanism. The
 generator still optimizes a proxy it can outrun: the gate arm trips BRENK on
-43.8% of what it makes against 35.0% for real BBB+ drugs. Nothing has been
-run past 150 steps under the gate, and the baseline collapse took until
-step ~150 to complete. The original measurement follows.
+43.8% of what it makes against 35.0% for real BBB+ drugs.
+
+**Structural diversity is restored; the property-space hack is not.** Measured
+on the new defaults against BBBP, the *direction* of drift is unchanged and on
+two descriptors slightly worse — TPSA −0.41 → −0.57 sd, logP +0.22 → +0.39 sd
+— even as spread recovers (TPSA 0.30× → 0.46×, HBA 0.26× → 0.45×, logP 0.43×
+→ 0.76×). The generator now walks the same low-polarity, lipophilic direction
+across a structurally diverse set instead of a collapsed one. That is a better
+failure, not an absent one, and it is exactly what 1.3 and 1.4 predict.
+
+Nothing has been run past 200 steps under the gate, and the baseline collapse
+took until step ~150 to complete. The original measurement follows.
 
 200 steps × 3 seeds: scaffold fraction 0.80 → 0.07–0.14, Tanimoto distance
 0.90 → 0.25–0.45, descriptor spread ~0.45 → ~0.12, while classifier reward
@@ -84,15 +98,40 @@ percentile 10). Three others were tested and failed: descriptor distance
 baseline's own collapse molecule at 0.289), and substructure catalogues (BRENK
 flags 35% of real BBB+ drugs, CHEMBL 64%).
 
-### 1.6 The size floor has never been run in training **[untested]**
-It separates on a 7-molecule probe. Whether it holds up as a reward term under
-150 steps of adversarial pressure from the generator is unknown, and the
-pattern of this investigation is that such things usually do not.
+### 1.6 The size floor now runs in training, and holds for 200 steps **[mitigated]**
+Run as the `gate` arm (150 steps × 3 seeds) and now as a default
+(`min_heavy_atoms=10`, 200 steps, seed 0). It holds: molecules under 10 heavy
+atoms fall to 0.016–0.031 of output against 0.047–0.188 without it, and
+scaffold diversity is unharmed (0.826–0.833 gated vs 0.741–0.795 raw).
 
-### 1.7 The reward's terms have never been ablated **[untested]**
-"The collapse is driven by C" is an inference from the saturation data, not a
-measured decomposition. `d_var` is logged but the discriminator's contribution
-has never been isolated, and `w_D`, `w_Q`, `w_S` have never been varied.
+It is **[mitigated]**, not resolved, for the reason given in 1.1: the gate
+blocks one *manifestation* — the tiny-solvent failure — while the mechanism
+that produces it is untouched. The gate arm still trips BRENK on 43.8% of its
+output against 35.0% for real drugs, and nothing has run past 200 steps.
+
+### 1.7 The reward's terms have now been ablated, and C was the wrong suspect **[measured]**
+4 terms × 3 seeds, 200 steps, each arm paired against a same-seed baseline
+(`term_ablation_findings.md`). Dropping **SA** recovers scaffold diversity by
+**+0.426 on 3/3 seeds** and is the only arm where no seed collapses. Dropping
+**C** gives +0.080 — also 3/3, but ~5× smaller, and all three seeds still
+collapse. `w_D` and `w_Q` do not separate (−0.016 and +0.021, 2/3 each).
+
+So "the collapse is driven by C" was wrong: SA is the driver. SA rewards ease
+of synthesis, which in practice selects small common fragments, and the term
+added as a realism guard is the main thing crushing structural diversity.
+
+Two by-products. With `w_C = 0` the term is still scored, and `mean_C` falls
+only 0.98 → 0.786 against BBBP's own 0.745 — the classifier's confidence is
+largely a side effect of what Q/S/D select for, not something the policy
+chases. And `sd_C` rises ~0.008 → ~0.074 when C is dropped: optimising C
+destroys ~8× of C's own between-molecule spread, which is the quantity the
+group-relative advantage consumes.
+
+Caveat: zeroing is not a marginal contribution — `group_advantages`
+standardises the total reward, so dropping a high-variance term inflates the
+weight of what remains. And nothing here shows dropping SA is *safe*: no
+synthesizability check was run on the resulting molecules. That is the next
+measurement, and a `w_S` sweep is cheaper than an on/off ablation.
 
 ### 1.8 `floor = -2.0` is untuned **[untested]**
 Carried over from `cold_and_warm_start.md`, never swept.

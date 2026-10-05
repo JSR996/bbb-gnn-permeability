@@ -114,13 +114,30 @@ def train(
     lr_g: float = 1e-4,
     lr_d: float = 1e-4,
     clip_eps: float = 0.2,
-    kl_coef: float = 0.02,
+    # kl_coef=0.3 and min_heavy_atoms=10 are the defaults because they are the
+    # only two interventions that have survived validation, and leaving them
+    # off made the DOCUMENTED command reproduce the hack. The KL sweep's
+    # three-part criterion fails at 0.02 and 0.1 and passes at 0.3 and 1.0;
+    # 0.3 is the smaller passing value and keeps roughly twice the permeability
+    # gain of 1.0 (c_gain 0.082 vs 0.043). At 0.02 scaffold diversity ends at
+    # 0.06-0.19 against 0.78 at 0.3 -- same code, same seeds.
+    #
+    # Deliberately still off: the logit transform makes scaffold collapse WORSE
+    # (0.741 -> 0.349, limitations 1.3 -- more gradient on a hackable objective
+    # buys more hacking), the Tox21 term worse still (3.3), and the alert
+    # penalty reduced only the SMARTS it was penalized on with no transfer to
+    # BRENK or PAINS (the Goodhart finding, 1.2b). Geometric aggregation scored
+    # worst of all four arms on every alert instrument.
+    #
+    # This is containment, not repair. See limitations 1.1: the failure is
+    # [mitigated], never resolved, and the mechanism is unchanged.
+    kl_coef: float = 0.3,
     invalid_floor: float = -2.0,
     schedule: str = "linear",
     k_anneal: int = 100,
     c_transform: str = "raw",
     w_tox: float = 0.0,
-    min_heavy_atoms: int = 0,
+    min_heavy_atoms: int = 10,   # BBBP 5th percentile; see note on kl_coef
     min_mw: float = 0.0,
     aggregate: str = "linear",
     alert_lambda: float = 0.0,
@@ -421,7 +438,7 @@ if __name__ == "__main__":
     ap.add_argument("--schedule", default="linear",
                     choices=["fixed", "linear", "cosine", "gated"])
     ap.add_argument("--k-anneal", type=int, default=100)
-    ap.add_argument("--kl-coef", type=float, default=0.02)
+    ap.add_argument("--kl-coef", type=float, default=0.3)
     ap.add_argument("--invalid-floor", type=float, default=-2.0,
                     help="advantage handed to unsanitizable molecules")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -430,7 +447,7 @@ if __name__ == "__main__":
                     help="decay rate for exp(-lambda*n_alerts); 0 disables")
     ap.add_argument("--w-alert", type=float, default=0.0,
                     help="weight on the alert term (see src/alerts.py)")
-    ap.add_argument("--min-heavy-atoms", type=int, default=0,
+    ap.add_argument("--min-heavy-atoms", type=int, default=10,
                     help="gate out molecules below this heavy-atom count")
     ap.add_argument("--min-mw", type=float, default=0.0)
     ap.add_argument("--aggregate", default="linear",

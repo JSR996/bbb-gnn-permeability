@@ -98,6 +98,7 @@ def check_baseline(n_steps: int, group_size: int, device: str,
     loop has drifted since those runs were made, the deltas measure the drift.
     Compare the first `n_steps` rows of a fresh default-config run.
     """
+    import inspect
     import json
 
     import torch
@@ -125,8 +126,49 @@ def check_baseline(n_steps: int, group_size: int, device: str,
 
     ref = pd.read_csv(base_dir(seed) / "history.csv").head(n_steps)
     tmp = ABL_DIR / "_baseline_check"
+    # Replay the baseline's OWN recorded configuration rather than today's
+    # defaults. The defaults are a moving target -- kl_coef moved 0.02 -> 0.3
+    # when the KL sweep settled -- and a baseline written under the old ones
+    # would otherwise "fail" this check for the one reason that is not a
+    # regression. Only keys train() actually accepts are replayed, so a config
+    # from a newer schema cannot crash an older checkout.
+    replay = {}
+    if cfg_path.exists():
+        accepted = set(inspect.signature(train).parameters)
+        skip = {"steps", "group_size", "device", "out_dir", "log", "seed",
+                "reference_stats", "torch_num_threads", "omp_num_threads",
+                "mkl_num_threads"}
+        replay = {k: v for k, v in cfg.items()
+                  if k in accepted and k not in skip and v is not None}
+        if "drop" in replay:
+            replay["drop"] = tuple(replay["drop"])
+        differs = {k: (v, inspect.signature(train).parameters[k].default)
+                   for k, v in replay.items()
+                   if v != inspect.signature(train).parameters[k].default}
+        if differs:
+            print("  replaying baseline config where it differs from defaults: "
+                  + ", ".join(f"{k}={was!r} (default {now!r})"
+                              for k, (was, now) in sorted(differs.items())))
+        # A key the baseline never recorded cannot be replayed, and its current
+        # default is not necessarily what that run used -- a parameter added
+        # later with a non-neutral default (min_heavy_atoms: 0 -> 10) changes
+        # behaviour that the old config has no way to express. Name those
+        # explicitly: the divergence they cause is a schema gap, not a
+        # regression, and is only fixable by passing the value by hand.
+        unrecorded = sorted(
+            k for k in accepted - skip - set(cfg)
+            if inspect.signature(train).parameters[k].default
+            not in (0, 0.0, (), None, False)
+        )
+        if unrecorded:
+            print("  NOTE: baseline predates " + ", ".join(unrecorded)
+                  + "; running at today's defaults ("
+                  + ", ".join(f"{k}={inspect.signature(train).parameters[k].default!r}"
+                              for k in unrecorded)
+                  + "). A divergence below may be that, not a regression.")
+
     out = train(steps=n_steps, group_size=group_size, device=device, seed=seed,
-                out_dir=tmp, log=False)["history"]
+                out_dir=tmp, log=False, **replay)["history"]
     new = pd.DataFrame(out)
     ok = True
     for col in ("reward_mean", "scaffold_frac", "c_mean"):

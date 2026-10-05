@@ -333,3 +333,84 @@ python -m src.classifier_ood
 
 Per-step sample dumps land in `results/gan/seed<n>/samples/stepNNNN.json`, so
 any metric not thought of yet can be computed offline without retraining.
+
+---
+
+## 10. Metric-level Goodhart: the alert penalty
+
+### 10.1 What was tried
+
+Section 5 left the reward with no term that knows a reactive electrophile
+from a drug. After the size gate removed the solvent optimum (§9), the
+generator moved to drug-*sized* reactive groups: aldehydes, imines, alkyl
+halides, long aliphatic chains, and in one sample an aziridine — a
+DNA-alkylating mutagen. A soft penalty `exp(-λ·N_alerts)` with λ=0.3 and
+weight 3 was added inside the geometric aggregation (`src/alerts.py`),
+against a targeted SMARTS set chosen by inspecting those failures.
+
+By its own metric it worked: 0.469 → 0.219 alerts/molecule against the gate
+arm, alerted fraction 34% → 20%, and the best scaffold diversity of any arm
+(0.839).
+
+### 10.2 What the cross-instrument audit found
+
+Scoring every arm on three libraries, pooled over 3 seeds (n=192 each).
+Only the first was optimized against:
+
+| arm | targeted (optimized) | BRENK | BRENK+PAINS+NIH |
+|---|---|---|---|
+| raw | 0.312 | 0.401 | 0.427 |
+| gate | 0.339 | 0.438 | 0.464 |
+| gate + geometric | 0.365 | 0.495 | 0.505 |
+| **alert-penalized** | **0.203** | **0.406** | **0.427** |
+| *real BBBP BBB+* | *0.324* | *0.350* | *0.389* |
+
+The penalty moved the set it was trained on (0.339 → 0.203) and left the
+independent ones inside seed noise (BRENK 0.438 → 0.406). It suppressed the
+specific SMARTS strings, not reactivity.
+
+On both independent measures the alert arm is **worse than the real drugs**
+— 0.406 against 0.350 on BRENK, 0.427 against 0.389 on the wider union. The
+"cleaner than approved drugs" reading holds only on the instrument the model
+was optimized against.
+
+### 10.3 A reporting trap worth recording separately
+
+The comparison that first looked reassuring — 32% for the targeted set
+against 35% for BRENK on real BBB+ drugs — is not a comparison at all. Those
+are different instruments, and their Jaccard overlap on that set is **0.36**
+(17.9% flagged by both, 14.5% only targeted, 17.1% only BRENK). They flag
+largely different molecules; the similar headline rate is coincidence. An
+earlier per-arm table used a third library again (BRENK+PAINS+NIH, 38.9% on
+real drugs) without the switch being flagged. Alert rates are only
+comparable within one fixed instrument.
+
+### 10.4 Resolution, and what it does not fix
+
+In-loop reactive-group penalties were abandoned. The active loop keeps the
+size gate only, and structural screening moves downstream to
+`src/postfilter.py`, where the generator cannot optimize against it — no
+reward, and no gradient, reaches a post-hoc filter. Using the full union
+there is safe for exactly the reason it was unsafe in the loop: nothing is
+being trained, so no instrument is being consumed as a detector.
+
+Measured on the three gate seeds, steps ≥ 120, deduplicated on canonical
+SMILES:
+
+| | |
+|---|---|
+| pooled | 5662 |
+| undersized | 172 |
+| targeted alert | 1969 |
+| catalogue alert | 2798 |
+| already in training | 9 |
+| **survivors** | **2244 (40%)** |
+| scaffold fraction | 0.646 → 0.704 |
+| C among survivors | mean 0.928, sd 0.090 |
+
+**This is containment, not a fix.** The generator is exactly as reactive as
+before — the gate arm still trips BRENK on 44% of what it makes, against
+35% for real drugs. Post-filtering selects; it does not improve the policy.
+What it buys is that the selection criterion cannot be gamed, and that the
+rejected set stays inspectable in `screened.csv` rather than being silently
+discarded.

@@ -18,12 +18,13 @@ from pathlib import Path
 import numpy as np
 import torch
 from rdkit import Chem, RDLogger
-from rdkit.Chem import QED, RDConfig
+from rdkit.Chem import QED, Descriptors, RDConfig
 from torch_geometric.data import Batch
 
 from .featurize import smiles_to_graph
 from .models import build_model
 from .models_edge import EDGE_MODELS, build_edge_model
+from .alerts import alert_score
 from .train import RESULTS_DIR
 
 RDLogger.DisableLog("rdApp.*")
@@ -111,20 +112,59 @@ def sanitizable(smiles: str) -> Chem.Mol | None:
     return None if mol is None or mol.GetNumAtoms() == 0 else mol
 
 
-def score_terms(smiles: list[str], classify) -> dict[str, np.ndarray]:
-    """Per-molecule stationary reward terms. Invalid rows are left at zero."""
+def score_terms(smiles: list[str], classify, tox=None,
+                min_heavy_atoms: int = 0, min_mw: float = 0.0,
+                alert_lambda: float = 0.0) -> dict[str, np.ndarray]:
+    """Per-molecule stationary reward terms. Invalid rows are left at zero.
+
+    `tox` is an optional frozen toxicity scorer (src.tox.load_frozen_tox). It
+    returns P(active) across the Tox21 assays, and is stored here as the
+    NON-toxicity term `t = 1 - P(active)` so that, like C, QED and SA, higher
+    is better and `assemble` stays a plain weighted sum with no sign
+    exceptions to remember.
+
+    Without it `t` is all ones, i.e. the term is present but inert, so a
+    history logged with and without a toxicity model stays the same shape.
+
+    `min_heavy_atoms` / `min_mw` gate out molecules too small to be drugs by
+    marking them INVALID, so they take the flat penalty and the hurdle
+    advantage exactly as a valence violation does. Two reasons to spend the
+    gate here rather than as another weighted term:
+
+      * a soft size reward is hackable in the other direction -- anything
+        monotone in size pays the generator to append carbon chains -- while
+        a gate has no gradient to climb at all;
+      * a term that must drive the reward to zero has a derivative that blows
+        up as it approaches zero. A hard gate sidesteps that entirely, which
+        is strictly better than the same veto expressed multiplicatively.
+
+    Both default to 0, i.e. off, so nothing that predates them changes. The
+    returned `undersized` mask reports what the gate removed, separately from
+    what failed sanitization, because those two are different problems and a
+    group starved of valid molecules must be diagnosable.
+    """
     n = len(smiles)
     valid = np.zeros(n, dtype=bool)
     c = np.zeros(n)
     qed = np.zeros(n)
     sa = np.zeros(n)
+    t = np.ones(n)
+    a = np.ones(n)
+
+    undersized = np.zeros(n, dtype=bool)
 
     mols, keep = [], []
     for i, smi in enumerate(smiles):
         mol = sanitizable(smi)
-        if mol is not None:
-            mols.append(mol)
-            keep.append(i)
+        if mol is None:
+            continue
+        if (min_heavy_atoms and mol.GetNumHeavyAtoms() < min_heavy_atoms) or (
+            min_mw and Descriptors.MolWt(mol) < min_mw
+        ):
+            undersized[i] = True
+            continue
+        mols.append(mol)
+        keep.append(i)
 
     if mols:
         idx = np.array(keep)
@@ -134,8 +174,18 @@ def score_terms(smiles: list[str], classify) -> dict[str, np.ndarray]:
         # Flip and rescale so higher is better, matching the other three terms.
         raw_sa = np.array([sascorer.calculateScore(m) for m in mols])
         sa[idx] = (SA_MAX - raw_sa) / (SA_MAX - SA_MIN)
+        if alert_lambda:
+            # Reactive-group penalty, exp(-lambda * n_distinct_alerts). Soft
+            # rather than a gate because 32% of real BBB+ drugs trip the same
+            # patterns -- a veto would reject a third of the answer.
+            a[idx] = alert_score([Chem.MolToSmiles(m) for m in mols], alert_lambda)
+        if tox is not None:
+            # Scored from canonical SMILES rather than the raw input so the
+            # toxicity model sees exactly the molecule the other terms did.
+            t[idx] = 1.0 - np.asarray(tox([Chem.MolToSmiles(m) for m in mols]))
 
-    return {"valid": valid, "c": c, "qed": qed, "sa": sa}
+    return {"valid": valid, "c": c, "qed": qed, "sa": sa, "t": t, "a": a,
+            "undersized": undersized}
 
 
 def weights_at(
@@ -169,7 +219,11 @@ def weights_at(
     else:
         raise ValueError(f"unknown schedule {schedule!r}")
 
-    return {key: w0[key] + (wf[key] - w0[key]) * lam for key in w0}
+    # A key present in w0 but not wf holds its initial value rather than
+    # raising: the toxicity weight is usually meant to be constant across the
+    # curriculum, and a missing endpoint should mean "do not anneal this one"
+    # rather than crashing a run 80 steps in.
+    return {key: w0[key] + (wf.get(key, w0[key]) - w0[key]) * lam for key in w0}
 
 
 # Calibration of the logit transform, measured once on the BBBP reference set
@@ -219,6 +273,8 @@ def assemble(
     w: dict[str, float],
     invalid_reward: float = 0.0,
     c_transform: str = "raw",
+    aggregate: str = "linear",
+    eps: float = 1e-6,
 ) -> np.ndarray:
     """Eq. 5. Invalid molecules collapse to a flat penalty, bypassing every term.
 
@@ -227,12 +283,73 @@ def assemble(
     stays the raw probability for logging and diagnostics, and a history
     written under one mode remains comparable to one written under the other.
     """
-    r = (
-        w["D"] * np.asarray(d_scores, dtype=float)
-        + w["C"] * transform_c(terms["c"], c_transform)
-        + w["Q"] * terms["qed"]
-        + w["S"] * terms["sa"]
-    )
+    parts = {
+        "D": np.asarray(d_scores, dtype=float),
+        "C": transform_c(terms["c"], c_transform),
+        "Q": terms["qed"],
+        "S": terms["sa"],
+    }
+    # Non-toxicity, opt-in. Absent from `w` the term contributes nothing, so
+    # existing callers and their weight dicts keep working unchanged; absent
+    # from `terms` (no toxicity model loaded) it is all ones and adds a
+    # constant, which a group-relative advantage subtracts away.
+    if w.get("T"):
+        parts["T"] = terms.get("t", np.ones_like(parts["C"]))
+    # Reactive-group alerts, opt-in the same way. Inside a geometric mean the
+    # 1/n exponent dilutes this heavily: at lambda 0.15 and weight 1 a
+    # four-alert molecule still keeps 0.89 of its reward. Weight it to match
+    # the bite intended, and see the table in the commit message.
+    if w.get("A"):
+        parts["A"] = terms.get("a", np.ones_like(parts["C"]))
+
+    if aggregate == "linear":
+        r = sum(w[k] * v for k, v in parts.items() if w.get(k))
+    elif aggregate == "geometric":
+        # Weighted geometric mean: prod(S_k ** w_k) ** (1 / sum w_k).
+        #
+        # The point is that a near-zero term drags the whole product down
+        # instead of being outbid by a maxed-out one. Measured on the probe
+        # set it closes the CCl4-vs-caffeine gap from +0.217 to +0.015, so it
+        # is a real improvement and NOT a sufficient one on its own: it only
+        # vetoes when some term actually approaches zero, and CCl4 is merely
+        # mediocre everywhere (QED 0.470) while maxing out C. The size gate in
+        # score_terms is what supplies the actual veto; this makes the
+        # remaining terms harder to trade off against each other.
+        #
+        # eps keeps both the value and the gradient finite: d(GM)/dS_k scales
+        # as GM / S_k, which diverges as S_k -> 0.
+        # Structural refusal, not a value check: transform_c("logit") is
+        # centred on the reference mean, so it is negative for any molecule
+        # below it and unbounded above. Whether a NEGATIVE value happens to
+        # appear in this particular group is luck, and a guard that only
+        # fires when it does would pass in testing and raise mid-run.
+        if c_transform != "raw":
+            raise ValueError(
+                f"aggregate='geometric' needs terms on a common [0, 1] scale, "
+                f"but c_transform={c_transform!r} is unbounded and can be "
+                f"negative. Use one or the other."
+            )
+        used = {k: v for k, v in parts.items() if w.get(k)}
+        total = sum(w[k] for k in used)
+        if total <= 0:
+            raise ValueError("geometric aggregation needs at least one positive weight")
+        acc = np.zeros_like(parts["C"], dtype=float)
+        for k, v in used.items():
+            # Terms must be on a common [0, 1] scale for a product to mean
+            # anything. transform_c("logit") is centred on the reference mean
+            # and goes negative, so the two options are incompatible and
+            # silently producing NaNs here would be worse than refusing.
+            if np.any(v < -eps):
+                raise ValueError(
+                    f"geometric aggregation needs terms in [0, 1]; {k} has "
+                    f"min {float(np.min(v)):.3f}. c_transform='logit' is not "
+                    f"compatible with aggregate='geometric'."
+                )
+            acc = acc + w[k] * np.log(np.clip(v, eps, 1.0))
+        r = np.exp(acc / total)
+    else:
+        raise ValueError(f"unknown aggregate {aggregate!r}")
+
     return np.where(terms["valid"], r, invalid_reward)
 
 
@@ -324,8 +441,141 @@ def _self_check() -> None:
     assert np.array_equal(r_raw[~terms["valid"]], r_log[~terms["valid"]]), \
         "invalid molecules must take the flat penalty under either mode"
 
+    # --- toxicity term ----------------------------------------------------
+    # Inert when no model is supplied, so nothing that predates it changes.
+    assert (terms["t"] == 1.0).all(), "t must default to 1 with no tox model"
+    assert np.allclose(assemble(terms, np.full(4, 0.5), w),
+                       assemble(terms, np.full(4, 0.5), {**w, "T": 0.0})), \
+        "T=0 must be identical to T absent"
+
+    # With a stub scorer it must reach the reward, and in the right
+    # direction: more toxic must mean less reward.
+    clean = score_terms(smis, classify, tox=lambda s: np.zeros(len(s)))
+    dirty = score_terms(smis, classify, tox=lambda s: np.ones(len(s)))
+    assert (clean["t"][clean["valid"]] == 1.0).all()
+    assert (dirty["t"][dirty["valid"]] == 0.0).all()
+    wt = {**w, "T": 1.0}
+    r_clean = assemble(clean, np.full(4, 0.5), wt)
+    r_dirty = assemble(dirty, np.full(4, 0.5), wt)
+    assert (r_clean[clean["valid"]] > r_dirty[dirty["valid"]]).all(), \
+        "predicted-toxic molecules must score lower, not higher"
+    # Invalid molecules keep the flat penalty; toxicity must not rescue them.
+    assert (r_clean[~clean["valid"]] == 0.0).all()
+
+    # Every other term must be untouched by adding a toxicity model.
+    for key in ("c", "qed", "sa", "valid"):
+        assert np.array_equal(terms[key], clean[key]), f"{key} changed"
+
+    # A weight dict without T must still work, since every existing caller
+    # has one.
+    assert np.isfinite(assemble(terms, np.full(4, 0.5), {"D": 1, "C": 1,
+                                                         "Q": 0.5, "S": 0.5})).all()
+    # And a schedule whose wf omits T must hold T constant rather than raise.
+    got = weights_at(50, {"D": 1.0, "C": 0.2, "Q": 0.5, "S": 0.5, "T": 0.8},
+                     {"D": 0.3, "C": 1.5, "Q": 0.5, "S": 0.5},
+                     schedule="linear", k_anneal=100)
+    assert got["T"] == 0.8, got
+
+    # --- size gate --------------------------------------------------------
+    solvents = ["ClC(Cl)(Cl)Cl", "FC(F)(F)F", "FC(F)(Cl)Cl"]
+    drugs = ["Cn1cnc2c1c(=O)n(C)c(=O)n2C", "CN1c2ccc(Cl)cc2C(=NCC1=O)c1ccccc1"]
+    both = solvents + drugs
+
+    open_gate = score_terms(both, classify)
+    assert open_gate["valid"].all(), "gate off must pass everything sanitizable"
+    assert not open_gate["undersized"].any()
+
+    gated = score_terms(both, classify, min_heavy_atoms=10)
+    assert list(gated["valid"]) == [False, False, False, True, True], gated["valid"]
+    assert list(gated["undersized"]) == [True, True, True, False, False]
+    # Gated molecules take the flat penalty, exactly as a valence violation
+    # does -- that is the whole point of routing them through `valid`.
+    rg = assemble(gated, np.full(len(both), 0.5), w)
+    assert (rg[:3] == 0.0).all() and (rg[3:] > 0).all(), rg
+    # And the surviving molecules must be scored identically either way: the
+    # gate removes candidates, it does not perturb the ones it keeps.
+    assert np.allclose(gated["c"][3:], open_gate["c"][3:])
+
+    # MW is an independent route to the same outcome, but a weaker one for
+    # exactly this failure: CCl4 is MW 153.8, so a 150 cutoff lets it through
+    # while the heavy-atom count catches it at 5. Halogens are heavy, and
+    # weight is a poor proxy for the molecular complexity actually wanted.
+    assert not score_terms(["ClC(Cl)(Cl)Cl"], classify, min_mw=150.0)["undersized"][0]
+    assert score_terms(["ClC(Cl)(Cl)Cl"], classify, min_mw=200.0)["undersized"][0]
+    assert score_terms(["FC(F)(F)F"], classify, min_mw=150.0)["undersized"][0]
+
+    # --- geometric aggregation -------------------------------------------
+    gw = {"D": 1.0, "C": 1.0, "Q": 1.0, "S": 1.0}
+    probe = score_terms(both, classify)
+    d05 = np.full(len(both), 0.5)
+    gm = assemble(probe, d05, gw, aggregate="geometric")
+    assert np.all(np.isfinite(gm)) and np.all(gm >= 0)
+
+    # Equal weights on identical terms reduce to that value.
+    flat = {"valid": np.array([True]), "c": np.array([0.4]), "qed": np.array([0.4]),
+            "sa": np.array([0.4]), "t": np.array([1.0]),
+            "undersized": np.array([False])}
+    assert abs(assemble(flat, np.array([0.4]), gw, aggregate="geometric")[0] - 0.4) < 1e-6
+
+    # A single near-zero term must drag the product down -- the property the
+    # linear form lacks. Compare a molecule good everywhere against the same
+    # one with QED ~ 0.
+    good = {k: v.copy() for k, v in flat.items()}
+    bad = {k: v.copy() for k, v in flat.items()}
+    bad["qed"] = np.array([0.0])
+    g_lin = assemble(good, np.array([0.4]), gw)[0]
+    b_lin = assemble(bad, np.array([0.4]), gw)[0]
+    g_gm = assemble(good, np.array([0.4]), gw, aggregate="geometric")[0]
+    b_gm = assemble(bad, np.array([0.4]), gw, aggregate="geometric")[0]
+    assert b_gm / g_gm < 0.05, f"geometric mean failed to veto ({b_gm:.4f}/{g_gm:.4f})"
+    assert b_lin / g_lin > 0.5, "linear form should barely notice, by contrast"
+
+    # eps must keep a zero term finite rather than producing -inf / nan.
+    assert np.isfinite(b_gm) and b_gm > 0
+
+    # Logit C is centred on the reference mean and goes negative, so it
+    # cannot be multiplied. Refuse rather than emit NaN.
+    try:
+        assemble(probe, d05, gw, aggregate="geometric", c_transform="logit")
+        raise AssertionError("logit + geometric should have been rejected")
+    except ValueError:
+        pass
+    try:
+        assemble(probe, d05, gw, aggregate="cubic")
+        raise AssertionError("unknown aggregate should have been rejected")
+    except ValueError:
+        pass
+
+    # --- alert term -------------------------------------------------------
+    assert (terms["a"] == 1.0).all(), "alerts must default to inert"
+    az = "CC(NC1=CC=CC=C1)OCC(=O)N2CC2C(C)C3=CC=C(F)C=C3CC"   # aziridine, gate+GM
+    al = score_terms([smis[0], az], classify, alert_lambda=0.3)
+    assert al["a"][0] == 1.0, "aspirin trips no alert"
+    assert al["a"][1] < 1.0, "aziridine must be penalized"
+    # It must reach the reward, and only when weighted.
+    d2 = np.full(2, 0.5)
+    w2 = {"D": 1.0, "C": 1.0, "Q": 1.0, "S": 1.0}
+    assert np.allclose(assemble(al, d2, w2), assemble(al, d2, {**w2, "A": 0.0}))
+    # Compare at FIXED weights, varying only the alert score -- adding a
+    # term changes the geometric normalizer (total weight), so a
+    # with-versus-without comparison is not controlled and can move either
+    # way regardless of the penalty.
+    wa = {**w2, "A": 3.0}
+    pen = assemble(al, d2, wa, aggregate="geometric")
+    clean_al = {**al, "a": np.ones_like(al["a"])}
+    nop = assemble(clean_al, d2, wa, aggregate="geometric")
+    assert pen[1] < nop[1], "alert term did not reduce the flagged molecule"
+    assert abs(pen[0] - nop[0]) < 1e-9, "unflagged molecule must be untouched"
+    # And the bite must scale with lambda.
+    hi = score_terms([smis[0], az], classify, alert_lambda=0.8)
+    assert assemble(hi, d2, wa, aggregate="geometric")[1] < pen[1]
+
     print(f"C(aspirin)={terms['c'][0]:.3f}  QED={terms['qed'][0]:.3f}  "
           f"SA_norm={terms['sa'][0]:.3f}  R={r[0]:.3f}")
+    print(f"size gate: {int(gated['undersized'].sum())}/3 solvents removed, "
+          f"both drugs kept")
+    print(f"geometric veto: QED->0 drops reward to {b_gm / g_gm:.1%} of baseline "
+          f"(linear: {b_lin / g_lin:.0%})")
     print(f"logit transform: {gain:.1f}x spread recovery on the saturated range")
     print("reward self-check passed")
 

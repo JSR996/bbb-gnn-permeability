@@ -85,7 +85,7 @@ def load_review() -> dict[str, str]:
 
 
 def curate(dedup: bool, conflicts: str, restrict: bool) -> pd.DataFrame:
-    raw = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    raw = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"])
     df = canonical(raw)
     n0 = len(df)
     print(f"parseable rows                : {n0}")

@@ -108,7 +108,7 @@ def training_data_audit(limit: int = 16) -> pd.DataFrame:
     is right about the only question it was ever asked. No filter bolted onto
     the reward changes what the label means.
     """
-    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    df = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"])
     rows = []
     for r in df.itertuples():
         m = Chem.MolFromSmiles(r.smiles)
@@ -119,7 +119,7 @@ def training_data_audit(limit: int = 16) -> pd.DataFrame:
 
 
 def main(device: str = "cpu") -> None:
-    real = [s for s in pd.read_csv(ROOT / "BBBP.csv")["smiles"].dropna()
+    real = [s for s in pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv")["smiles"].dropna()
             if Chem.MolFromSmiles(s)]
 
     print("=" * 66)
@@ -174,7 +174,7 @@ def main(device: str = "cpu") -> None:
     print("=" * 66)
     a = training_data_audit()
     print(a.to_string(index=False))
-    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    df = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"])
     n_small = n_small_pos = 0
     for r in df.itertuples():
         m = Chem.MolFromSmiles(r.smiles)

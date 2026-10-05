@@ -53,7 +53,7 @@ OUT_DIR = ROOT / "results" / "curation_sweep"
 
 def stage_frames() -> dict[str, pd.DataFrame]:
     """The three training-row sets, keyed by canonical SMILES."""
-    raw = canonical(pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"]))
+    raw = canonical(pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"]))
     print("\n--- stage: defects ---")
     defects = curate(dedup=True, conflicts="drop", restrict=False)
     print("\n--- stage: full ---")

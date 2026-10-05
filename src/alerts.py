@@ -121,7 +121,7 @@ def _self_check() -> None:
 
     # False-positive rate on real BBB+ drugs is the constraint that forces
     # this to be soft rather than a gate. Report it rather than assume it.
-    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    df = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"])
     mols = [m for m in (Chem.MolFromSmiles(x) for x in df[df.p_np == 1].smiles) if m]
     n = np.array([count_alerts(m) for m in mols])
     print(f"  BBBP BBB+ (n={len(mols)}): {np.mean(n > 0):.0%} trip >=1 alert, "
@@ -190,7 +190,7 @@ def cross_instrument_check(arms: dict[str, list[str]] | None = None) -> "object"
                          "targeted": np.mean([count_alerts(m) > 0 for m in mols]),
                          "brenk": np.mean([brenk.HasMatch(m) for m in mols]),
                          "brenk_pains_nih": np.mean([mixed.HasMatch(m) for m in mols])})
-    df = pd.read_csv(ROOT / "BBBP.csv").dropna(subset=["smiles"])
+    df = pd.read_csv(ROOT / "data" / "raw" / "BBBP.csv").dropna(subset=["smiles"])
     pos = [m for m in (Chem.MolFromSmiles(s) for s in df[df.p_np == 1].smiles) if m]
     rows.append({"set": "BBBP BBB+", "n": len(pos),
                  "targeted": np.mean([count_alerts(m) > 0 for m in pos]),

@@ -148,8 +148,14 @@ def train(
     out_dir: Path = OUT_DIR,
     log: bool = True,
     seed: int = 0,
+    warm_start: str | None = None,
 ) -> dict:
-    warm = CKPT_DIR / f"{dataset}_pretrained.pt"
+    # Which pretrained decoder seeds theta_0, and therefore pi_ref, since
+    # Eq. (18) sets pi_ref := pi_theta0. Swapping it swaps the KL anchor too,
+    # which is the point of comparing an MLE against a VAE warm start:
+    # limitations 1.4 says no kl_coef can produce a distribution wider than
+    # its own reference, so the warm start is the ceiling.
+    warm = Path(warm_start) if warm_start else CKPT_DIR / f"{dataset}_pretrained.pt"
     if not warm.exists():
         raise FileNotFoundError(
             f"no warm start at {warm}. GRPO cannot bootstrap from a uniform "
@@ -212,15 +218,12 @@ def train(
         valid_history.append(float(terms["valid"].mean()))
         w = weights_at(k, {**W0, "T": w_tox, "A": w_alert}, WF, schedule=schedule,
                        k_anneal=k_anneal, valid_history=valid_history)
-        rewards = assemble(terms, d_scores, w, c_transform=c_transform,
-                           aggregate=aggregate)
-        w = weights_at(k, W0, WF, schedule=schedule, k_anneal=k_anneal,
-                       valid_history=valid_history)
         # Ablation: zero the weight, keep computing the term. The term is still
         # scored and logged (c_mean etc.), so what the classifier thinks of the
         # generated molecules stays observable even when it no longer steers.
         w = {key: (0.0 if key in drop else val) for key, val in w.items()}
-        rewards = assemble(terms, d_scores, w, c_transform=c_transform)
+        rewards = assemble(terms, d_scores, w, c_transform=c_transform,
+                           aggregate=aggregate)
         # Hurdle form: the reward from `assemble` is zero-inflated by
         # construction, so the invalid molecules must not set the scale the
         # valid ones are ranked on (see group_advantages).
@@ -335,6 +338,7 @@ def train(
             "aggregate": aggregate, "alert_lambda": alert_lambda,
             "w_alert": w_alert,
             "c_transform": c_transform, "drop": list(drop),
+            "warm_start": str(warm),
             # Thread count is part of the configuration, not of the machine.
             # OpenMP changes the order of float reductions, and this training
             # loop is chaotic: a run that reproduces to 2e-16 at a matching
@@ -451,13 +455,15 @@ if __name__ == "__main__":
                     help="gate out molecules below this heavy-atom count")
     ap.add_argument("--min-mw", type=float, default=0.0)
     ap.add_argument("--aggregate", default="linear",
-                    choices=["linear", "geometric"])
+                    choices=["linear", "geometric", "nsga2", "composite"])
     ap.add_argument("--w-tox", type=float, default=0.0,
                     help="weight on the non-toxicity term (needs src.tox)")
     ap.add_argument("--c-transform", default="raw", choices=["raw", "logit"],
                     help="rescale the permeability term; see reward.transform_c")
     ap.add_argument("--drop", default="",
                     help="comma-separated reward terms to zero, from D,C,Q,S")
+    ap.add_argument("--warm-start", default=None,
+                    help="pretrained decoder seeding theta_0 and pi_ref")
     ap.add_argument("--out-dir", default=None,
                     help="defaults to results/gan/seed<seed>")
     args = ap.parse_args()
@@ -472,6 +478,7 @@ if __name__ == "__main__":
               w_tox=args.w_tox, min_heavy_atoms=args.min_heavy_atoms,
               min_mw=args.min_mw, aggregate=args.aggregate,
               alert_lambda=args.alert_lambda, w_alert=args.w_alert,
-              drop=tuple(t for t in args.drop.split(",") if t))
+              drop=tuple(t for t in args.drop.split(",") if t),
+              warm_start=args.warm_start)
     else:
         _self_check()

@@ -116,7 +116,79 @@ threads for this reason; the previously committed ones were produced elsewhere
 and do not reproduce here at any thread count available on this machine. The
 earlier versions remain in git history.
 
-## 6. What this suggests next
+**The committed arms are verified 6-thread.** A first pass at this ablation
+was run at `--jobs 4` (9 threads) against 6-thread baselines and discarded;
+because the arm configs predate the `torch_num_threads` field, the config
+alone cannot tell the discarded pass from the re-run. Settled by replaying
+`drop_S/seed0` for 30 steps at 6 threads, passing by hand the pre-schema
+values its config has no field for (`min_heavy_atoms=0`, `aggregate=linear`,
+`w_tox=0`): `reward_mean` agrees to **2.22e-16**, which is exact. The
+committed data is the clean pass. The same replay doubles as a regression
+test that the duplicate-`assemble` fix left the default reward path
+bit-identical.
+
+## 6. The Tox21 term, re-measured after a void result
+
+**The earlier claim "the Tox21 term does nothing and costs diversity
+(0.838 -> 0.816)" is retracted.** It was not a weak result, it was not a
+result: a rebase duplicated the `assemble` call in `train_gan`, so from
+`ac3e304` until the fix, `--w-tox`, `--w-alert` and `--aggregate` were
+computed and then overwritten by a second call using the defaults. That run
+compared a baseline against itself. The bug was caught because all three
+reduction modes produced byte-identical output, which is the only reason the
+number was not published.
+
+Re-measured with the flag actually applied (`src/tox_arm.py`, `w_tox = 0.5`,
+four seeds, paired on both the GRPO seed and the per-seed warm start, against
+`results/factorial_ws/mle_withC`):
+
+| metric | baseline | `w_tox=0.5` | delta | seeds up |
+|---|---|---|---|---|
+| scaffold_frac | 0.811 | 0.756 | **-0.055** | **0/4** |
+| tanimoto_dist | 0.887 | 0.880 | -0.007 | 0/4 |
+| c_mean | 0.925 | 0.928 | +0.003 | 2/4 |
+| kl to pi_ref | 0.066 | 0.078 | **+0.011** | **4/4** |
+| valid_frac | 0.963 | 0.961 | -0.002 | 2/4 |
+
+And the question the term exists to answer, which the history cannot report
+because the baseline never loaded the tox model (its `tox_mean` column is
+logged against an all-ones placeholder) -- both arms scored post hoc with the
+same frozen scorer:
+
+| | P(active), mean over 12 assays |
+|---|---|
+| baseline | 0.357 |
+| `w_tox=0.5` | **0.294** (-0.063, 4/4 seeds) |
+| real BBBP+ drugs, n=1560 | **0.353** |
+
+Three readings, in order of confidence:
+
+1. **The term is not inert.** It moves its own objective by -0.063 on every
+   seed. The void claim was wrong in both directions: the term works, and the
+   diversity cost it was credited with was never measured.
+
+2. **It buys no permeability.** `c_mean` moves +0.003 with 2/4 sign
+   agreement. Toxicity and permeability are close to orthogonal here, which
+   is consistent with the near-zero pairwise objective correlations measured
+   for the Pareto work -- and is exactly the regime where a linear
+   scalarization has to trade one against the other rather than find both.
+
+3. **It is Goodharting, and the real-drug row is how we know.** The baseline
+   already sits at 0.357, which is where approved BBBP+ drugs sit (0.353). So
+   the term is not fixing a toxicity problem the generator had; it is pushing
+   molecules *past* real approved CNS drugs into a region the scorer scores
+   low. The cost of that trip is 0.055 scaffold diversity on every seed and a
+   policy 17% further from pi_ref. A term whose benchmark is already met by
+   the unmodified baseline, and which pays diversity to overshoot it, is
+   measuring the scorer, not the molecules.
+
+**Recommendation: leave `w_tox = 0`** until there is an off-instrument
+toxicity judge, the way B3DB serves for permeability. With only the training
+scorer in the loop there is no way to separate "less toxic" from "better at
+this scorer", and the real-drug reference says the second explanation is live.
+The term stays implemented and tested so the question can be re-opened cheaply.
+
+## 7. What this suggests next
 
 - Ablate **S** against a *synthesizability-aware* check: does dropping it buy
   diversity at the cost of unmakeable molecules, or was the term simply

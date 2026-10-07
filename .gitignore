@@ -10,3 +10,7 @@ venv/
 .DS_Store
 __MACOSX/
 *.zip
+
+# Stray full clone of this repo made while debugging a cold start
+bbb-gnn-permeability/
+.vscode/

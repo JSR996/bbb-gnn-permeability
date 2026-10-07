@@ -22,6 +22,7 @@ from rdkit.Chem import QED, Descriptors, RDConfig
 from torch_geometric.data import Batch
 
 from .featurize import smiles_to_graph
+from .pareto import reduce_objectives
 from .models import build_model
 from .models_edge import EDGE_MODELS, build_edge_model
 from .alerts import alert_score
@@ -347,6 +348,36 @@ def assemble(
                 )
             acc = acc + w[k] * np.log(np.clip(v, eps, 1.0))
         r = np.exp(acc / total)
+    elif aggregate in ("nsga2", "composite"):
+        # Pareto reduction. Our linear reward is a Minkowski-weighted
+        # scalarization, which by Das & Dennis (1997) can only reach the
+        # convex hull of the frontier -- measured on our own groups, 0.48 of
+        # it. Dominance ranking does not collapse the objective vector before
+        # ranking, so a concave fold is reachable. See src/pareto.py.
+        #
+        # Dominance and crowding are computed over the VALID subset only.
+        # Invalid rows carry zeros in every term, so including them would
+        # make them dominated by construction and, worse, stretch every
+        # crowding range toward zero -- the diversity signal would be
+        # measuring the invalid rate rather than the spread of real
+        # candidates.
+        used = [(k, v) for k, v in parts.items() if w.get(k)]
+        if not used:
+            raise ValueError(f"{aggregate} needs at least one positive weight")
+        valid = terms["valid"]
+        r = np.full(len(valid), float(invalid_reward))
+        if valid.sum() >= 2:
+            F = np.stack([v[valid] for _, v in used], axis=1)
+            r[valid] = reduce_objectives(
+                F, np.array([w[k] for k, _ in used]), mode=aggregate
+            )
+        elif valid.any():
+            r[valid] = 0.0
+        # Returned directly: these scores are centred near zero and go
+        # negative, so `invalid_reward` is NOT a floor below them. Pair this
+        # with group_advantages(valid=...), which hands invalid molecules a
+        # fixed floor and never lets them into the valid subgroup's scale.
+        return r
     else:
         raise ValueError(f"unknown aggregate {aggregate!r}")
 

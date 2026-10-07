@@ -183,8 +183,16 @@ def pretrain(
     lr: float = 1e-3,
     max_len: int = 72,
     device: str = "cpu",
+    seed: int = 0,
+    out_name: str | None = None,
 ) -> SelfiesGenerator:
     """MLE warm start on real molecules.
+
+    `seed` exists so the warm start can be REPLICATED, not just the RL that
+    follows. Every GRPO seed shares one checkpoint, so a comparison between two
+    pretraining schemes run off a single checkpoint each has n=1 at the level
+    of the thing being compared -- more GRPO seeds narrow the interval around
+    one draw rather than estimating the spread of the scheme.
 
     Not optional in practice: from a uniform babbler every sampled group is
     all-invalid, every reward is the same flat penalty, and the group has zero
@@ -192,6 +200,7 @@ def pretrain(
     out. GRPO would then receive no gradient at all until validity appeared by
     chance, which is what this warm start supplies instead.
     """
+    torch.manual_seed(seed)
     smiles = _load_raw(dataset)["smiles"].dropna().tolist()
     vocab = build_vocab(smiles)
     selfies = [s for s in (encode(x) for x in smiles) if s]
@@ -221,7 +230,7 @@ def pretrain(
         valid = sum(bool(s) and Chem.MolFromSmiles(s) is not None for s in probe)
         print(f"  epoch {ep + 1:>2}  nll={total / len(data):.4f}  valid={valid / 200:.1%}")
 
-    path = CKPT_DIR / f"{dataset}_pretrained.pt"
+    path = CKPT_DIR / (out_name or f"{dataset}_pretrained.pt")
     gen.save(path)
     print(f"saved {path}")
     return gen
@@ -288,9 +297,12 @@ if __name__ == "__main__":
     ap.add_argument("--pretrain", action="store_true")
     ap.add_argument("--dataset", default="bbbp")
     ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out-name", default=None)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
     if args.pretrain:
-        pretrain(args.dataset, epochs=args.epochs, device=args.device)
+        pretrain(args.dataset, epochs=args.epochs, device=args.device,
+                 seed=args.seed, out_name=args.out_name)
     else:
         _self_check()

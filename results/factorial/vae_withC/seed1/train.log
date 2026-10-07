@@ -1,0 +1,25 @@
+C:\Users\CSE_SDPL\AppData\Roaming\Python\Python312\site-packages\torch\jit\_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+step    0  R=+0.867  valid=67%  C=0.826  scaf=0.58  tan=0.936  tpsa=-0.32sd/0.55x  kl=0.0039
+step   10  R=+1.246  valid=84%  C=0.909  scaf=0.75  tan=0.915  tpsa=-0.60sd/0.43x  kl=0.0389
+step   20  R=+1.226  valid=84%  C=0.883  scaf=0.68  tan=0.905  tpsa=-0.51sd/0.46x  kl=0.0406
+step   30  R=+1.351  valid=89%  C=0.899  scaf=0.77  tan=0.903  tpsa=-0.51sd/0.43x  kl=0.0561
+step   40  R=+1.535  valid=97%  C=0.899  scaf=0.86  tan=0.894  tpsa=-0.57sd/0.39x  kl=0.0560
+step   50  R=+1.543  valid=94%  C=0.919  scaf=0.67  tan=0.892  tpsa=-0.60sd/0.38x  kl=0.0583
+step   60  R=+1.577  valid=91%  C=0.910  scaf=0.86  tan=0.894  tpsa=-0.53sd/0.51x  kl=0.0585
+step   70  R=+1.764  valid=94%  C=0.892  scaf=0.67  tan=0.902  tpsa=-0.54sd/0.44x  kl=0.0723
+step   80  R=+1.897  valid=97%  C=0.929  scaf=0.80  tan=0.892  tpsa=-0.56sd/0.39x  kl=0.0630
+step   90  R=+1.977  valid=97%  C=0.912  scaf=0.79  tan=0.886  tpsa=-0.61sd/0.37x  kl=0.0622
+step  100  R=+2.000  valid=92%  C=0.908  scaf=0.77  tan=0.891  tpsa=-0.65sd/0.34x  kl=0.0722
+step  110  R=+2.030  valid=94%  C=0.931  scaf=0.67  tan=0.871  tpsa=-0.62sd/0.47x  kl=0.0672
+step  120  R=+2.085  valid=95%  C=0.923  scaf=0.84  tan=0.881  tpsa=-0.72sd/0.33x  kl=0.0833
+step  130  R=+2.167  valid=100%  C=0.918  scaf=0.89  tan=0.882  tpsa=-0.66sd/0.38x  kl=0.0756
+step  140  R=+2.125  valid=98%  C=0.924  scaf=0.75  tan=0.885  tpsa=-0.55sd/0.46x  kl=0.0738
+step  150  R=+1.993  valid=92%  C=0.923  scaf=0.79  tan=0.889  tpsa=-0.70sd/0.41x  kl=0.0744
+step  160  R=+2.154  valid=100%  C=0.930  scaf=0.89  tan=0.882  tpsa=-0.67sd/0.39x  kl=0.0734
+step  170  R=+2.011  valid=92%  C=0.926  scaf=0.66  tan=0.885  tpsa=-0.68sd/0.48x  kl=0.0764
+step  180  R=+2.078  valid=97%  C=0.927  scaf=0.72  tan=0.895  tpsa=-0.63sd/0.46x  kl=0.0716
+step  190  R=+2.048  valid=94%  C=0.927  scaf=0.77  tan=0.895  tpsa=-0.72sd/0.33x  kl=0.0715
+step  199  R=+1.965  valid=91%  C=0.923  scaf=0.70  tan=0.903  tpsa=-0.64sd/0.46x  kl=0.0634
+
+wrote results\factorial\vae_withC\seed1  (199/200 valid samples)

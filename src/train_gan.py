@@ -149,12 +149,32 @@ def train(
     log: bool = True,
     seed: int = 0,
     warm_start: str | None = None,
+    threads: int | None = None,
 ) -> dict:
     # Which pretrained decoder seeds theta_0, and therefore pi_ref, since
     # Eq. (18) sets pi_ref := pi_theta0. Swapping it swaps the KL anchor too,
     # which is the point of comparing an MLE against a VAE warm start:
     # limitations 1.4 says no kl_coef can produce a distribution wider than
     # its own reference, so the warm start is the ceiling.
+    # Pin the thread count IN PROCESS, before any tensor exists. Recording it
+    # was not enough. OpenMP changes the order of float reductions and this
+    # loop is chaotic, so the thread count is part of the configuration -- but
+    # the env vars express it unreliably: OMP_NUM_THREADS=36 silently binds 18
+    # on this machine (torch clamps the env route to physical cores) while 5
+    # and 6 bind faithfully. A driver that sets the env and trusts it can run
+    # two arms at different thread counts believing they match, which is how
+    # the first term ablation was contaminated.
+    #
+    # torch.set_num_threads() is authoritative where the env var is not: it
+    # accepts the value as given, including above the physical-core count, and
+    # get_num_threads() reports back what was actually set. So passing
+    # `threads` makes the run's reduction order a property of the command line
+    # rather than of the machine's core count, which is the whole point.
+    if threads is not None:
+        if threads < 1:
+            raise ValueError(f"threads must be >= 1, got {threads}")
+        torch.set_num_threads(threads)
+
     warm = Path(warm_start) if warm_start else CKPT_DIR / f"{dataset}_pretrained.pt"
     if not warm.exists():
         raise FileNotFoundError(
@@ -349,6 +369,7 @@ def train(
             # diverged, never why. torch.get_num_threads() is the value that
             # actually bound; the env vars are recorded because they are what
             # a caller sets to reproduce it.
+            "threads_requested": threads,
             "torch_num_threads": torch.get_num_threads(),
             "omp_num_threads": os.environ.get("OMP_NUM_THREADS"),
             "mkl_num_threads": os.environ.get("MKL_NUM_THREADS"),
@@ -466,6 +487,9 @@ if __name__ == "__main__":
                     help="pretrained decoder seeding theta_0 and pi_ref")
     ap.add_argument("--out-dir", default=None,
                     help="defaults to results/gan/seed<seed>")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="pin torch thread count; required for any run that "
+                         "will be compared against another (see findings 5)")
     args = ap.parse_args()
 
     if args.steps:
@@ -479,6 +503,6 @@ if __name__ == "__main__":
               min_mw=args.min_mw, aggregate=args.aggregate,
               alert_lambda=args.alert_lambda, w_alert=args.w_alert,
               drop=tuple(t for t in args.drop.split(",") if t),
-              warm_start=args.warm_start)
+              warm_start=args.warm_start, threads=args.threads)
     else:
         _self_check()

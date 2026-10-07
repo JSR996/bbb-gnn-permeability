@@ -68,10 +68,11 @@ def is_done(rdir: Path) -> bool:
     return (rdir / "config.json").exists()
 
 
-def _cmd(term: str, seed: int, steps: int, group_size: int, device: str) -> list[str]:
+def _cmd(term: str, seed: int, steps: int, group_size: int, device: str,
+         threads: int) -> list[str]:
     return [sys.executable, "-m", "src.train_gan", "--steps", str(steps),
             "--seed", str(seed), "--group-size", str(group_size),
-            "--device", device, "--drop", term,
+            "--device", device, "--drop", term, "--threads", str(threads),
             "--out-dir", str(run_dir(term, seed))]
 
 
@@ -80,9 +81,17 @@ def _launch(job: tuple[str, int], steps: int, group_size: int, device: str,
     term, seed = job
     rdir = run_dir(term, seed)
     rdir.mkdir(parents=True, exist_ok=True)
+    # --threads, not the env vars. torch clamps the env route to physical
+    # cores without saying so (OMP_NUM_THREADS=36 binds 18 here), so a driver
+    # that sets the env and trusts it can hand two arms different thread
+    # counts while believing they match -- the contamination this ablation
+    # already suffered once. set_num_threads() takes the value as given, and
+    # --threads 6 reproduces an OMP=6 baseline to 2.22e-16 from an ambient
+    # 18-thread shell. The env vars are still set so that any BLAS that does
+    # not route through torch sees the same number.
     env = {**os.environ, "OMP_NUM_THREADS": str(threads), "MKL_NUM_THREADS": str(threads)}
     with open(rdir / "train.log", "w") as log:
-        rc = subprocess.run(_cmd(term, seed, steps, group_size, device),
+        rc = subprocess.run(_cmd(term, seed, steps, group_size, device, threads),
                             stdout=log, stderr=subprocess.STDOUT, env=env,
                             cwd=ROOT).returncode
     print(f"  drop_{term}/seed{seed}: {'ok' if rc == 0 else f'FAILED rc={rc} (see train.log)'}",

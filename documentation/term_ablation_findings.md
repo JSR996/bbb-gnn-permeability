@@ -107,9 +107,31 @@ than the effects this ablation measures. Two consequences:
    `OMP_NUM_THREADS=6`.
 2. `train_gan` now records `torch_num_threads` / `omp_num_threads` /
    `mkl_num_threads` in `config.json`, and `--check-baseline` warns on a
-   mismatch instead of reporting an unexplained divergence. `torch.get_num_threads()`
-   is recorded alongside the env vars because torch clamps to physical cores —
-   `OMP_NUM_THREADS=36` binds 18 on this machine.
+   mismatch instead of reporting an unexplained divergence.
+
+3. **Recording it was not enough, because the env vars express it
+   unreliably.** `torch.get_num_threads()` is recorded alongside the env vars
+   because torch clamps the env route to physical cores *without saying so*:
+
+   | request | via `OMP_NUM_THREADS` | via `torch.set_num_threads()` |
+   |---|---|---|
+   | 5 | 5 | 5 |
+   | 6 | 6 | 6 |
+   | 36 | **18** (silently clamped) | 36 |
+
+   So a driver that sets the env and trusts it can hand two arms different
+   thread counts while believing they match — which is exactly how the first
+   pass at this ablation was contaminated. `set_num_threads()` takes the value
+   as given, so `train_gan` now has **`--threads N`**, which pins it in
+   process before any tensor exists, and `term_ablation` passes it instead of
+   relying on the env. Validated: `--threads 6` from an ambient 18-thread
+   shell reproduces the `OMP_NUM_THREADS=6` baseline to **2.22e-16**.
+   `config.json` records `threads_requested` next to what actually bound, so
+   the two can never silently disagree again.
+
+   **Rule: any run that will be compared against another passes `--threads`.**
+   The env vars are still set in the driver so that any BLAS not routed
+   through torch sees the same number.
 
 **The baselines in `results/gan/seed{0,1,2}` were regenerated locally** at 6
 threads for this reason; the previously committed ones were produced elsewhere
@@ -188,7 +210,77 @@ scorer in the loop there is no way to separate "less toxic" from "better at
 this scorer", and the real-drug reference says the second explanation is live.
 The term stays implemented and tested so the question can be re-opened cheaply.
 
-## 7. What this suggests next
+## 7. The SA term overshoots real drugs — the diversity it costs is free
+
+Dropping S was the headline of section 1: +0.426 scaffold diversity on 3/3
+seeds, and the only arm that did not collapse. That was reported without
+checking the one thing the SA term exists to protect. Raw `sascorer`
+(1 = trivial, 10 = hopeless; >6 conventionally hard, >8 a red flag), on the
+final samples of each arm against real BBBP+ drugs — the only ground truth
+available, since every one of them was actually synthesized:
+
+| arm | n | SA mean | SA p90 | >6 | >8 |
+|---|---|---|---|---|---|
+| real BBBP+ drugs | 1560 | **3.05** | 4.71 | 0.8% | 0.0% |
+| baseline seed0 | 191 | 2.31 | 3.33 | 0.0% | 0.0% |
+| drop_S seed0 | 771 | 2.89 | 4.09 | 0.3% | 0.0% |
+| baseline seed1 | 257 | 2.20 | 3.19 | 0.0% | 0.0% |
+| drop_S seed1 | 1220 | 3.28 | 4.78 | 1.2% | 0.0% |
+| baseline seed2 | 211 | 2.10 | 3.03 | 0.0% | 0.0% |
+| drop_S seed2 | 789 | 3.07 | 4.09 | 0.6% | 0.0% |
+
+**Dropping S does not produce unmakeable molecules.** It moves SA from
+2.1–2.3 to 2.9–3.3, which lands on real drugs at 3.05. Not one molecule in
+any arm exceeds 8, and the >6 rate goes from 0% to ~0.7% against real drugs'
+0.8%. The term was not protecting makeability; it was holding the generator
+*below* real approved drugs in complexity, and simple molecules are the easy
+way to score well on every other term too — which is why removing it is the
+largest diversity gain in the ablation.
+
+This is the same shape as the Tox21 result in section 6, and that is the
+finding worth carrying forward: **both terms drive the policy past the
+real-drug reference on their own axis, and pay diversity for the overshoot.**
+A term is only earning its weight if the unmodified baseline is actually
+*worse* than real drugs on that axis. Neither was. The reference row belongs
+in every future term evaluation, because without it "the term moved its own
+objective" reads as success.
+
+## 8. The advantage's blindness is real but latent, and reward_mean cannot see it
+
+`group_advantages` standardizes inside the valid subgroup, so it is invariant
+to uniform scale and shift (verified: identical under `10*r`, `r+3`,
+`0.06*r`). A group where every candidate is bad still yields a full +-1 spread
+of advantages. That is a real property; "it exists" is not "it harms".
+
+**It cannot be tested on `reward_mean`.** That column contains an adversarial
+D term whose scale moves as D trains, plus a `w_C` that anneals 0.2 -> 1.5. In
+the `mle_noC` arm `reward_mean` falls 1.03 -> 0.76 and spends 190/200 steps
+below its own opening — which looks exactly like the blindness biting, until
+you decompose it: correlation with `d_loss` is **+0.727** while `qed_mean`
+*rises* 0.558 -> 0.710. The policy was improving; the discriminator was
+improving faster. There is no scalar progress metric in this architecture,
+which is part of why the collapse was diagnosed late.
+
+Rebuilt on a ruler that holds still — frozen C + QED + SA at equal weights,
+no D, no anneal, recomputed on the saved samples at stride 10:
+
+| arm | opening | min | final | net | steps below opening |
+|---|---|---|---|---|---|
+| `mle_withC`/seed1 | 2.207 | 2.028 | 2.387 | **+0.180** | 2/20 |
+| `mle_noC`/seed1 | 2.158 | 2.028 | 2.348 | **+0.190** | 1/20 |
+
+So the blindness is **latent, not biting**: the policy essentially never
+visits a group worse than where it started, so the one case the invariance
+mishandles does not arise. No absolute anchor beyond the existing KL is
+warranted on this evidence.
+
+The second row is the more uncomfortable one. With `w_C = 0` the policy
+improves a composite that *includes* C by **+0.190**, against **+0.180** with
+`w_C` annealed to its full 1.5. That is the strongest form yet of section 2's
+finding: on a stationary ruler, the permeability weight buys nothing it would
+not have got for free.
+
+## 9. What this suggests next
 
 - Ablate **S** against a *synthesizability-aware* check: does dropping it buy
   diversity at the cost of unmakeable molecules, or was the term simply

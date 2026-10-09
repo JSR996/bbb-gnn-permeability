@@ -234,7 +234,14 @@ def main() -> None:
                         "(reproduces the pre-contract split)")
     p.add_argument("--device", default="cpu",
                    help="cpu (default) is fastest for these small graphs")
+    p.add_argument("--threads", type=int, default=None,
+                   help="torch.set_num_threads; authoritative where "
+                        "OMP_NUM_THREADS is not (CLAUDE.md). Pinned because "
+                        "OpenMP changes float reduction order.")
     args = p.parse_args()
+    if args.threads is not None:
+        torch.set_num_threads(args.threads)
+
 
     print(f"[{args.dataset}/{args.model}/seed{args.seed}]")
     train_one(

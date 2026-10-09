@@ -31,6 +31,8 @@ python -m src.featurize      # featurizer
 python -m src.models         # forward-pass shapes
 python -m src.datasets       # build caches + verify splits
 python -m src.reward && python -m src.grpo
+python -m src.brics          # decompose/reassemble round-trip
+python -m src.split          # grouping + the leak-assertion trap
 ```
 
 ## Common commands
@@ -38,10 +40,10 @@ python -m src.reward && python -m src.grpo
 ```bash
 # classifier
 python -m src.train --model gcn --dataset bbbp --seed 0   # one run
-python -m src.run_all                                     # all 24 base runs
-python -m src.train_edge --run-all                        # 18
-python -m src.train_dmpnn --run-all                       # 6
-python -m src.train_hybrid --run-all                      # 24
+python -m src.run_all                                     # all 80 base runs
+python -m src.train_edge --run-all                        # 60
+python -m src.train_hybrid --run-all                      # 80
+python -m src.run_all --threads 6 --force                 # pin reduction order
 python baselines/descriptor_baseline_v2.py                # LightGBM, no torch
 
 # evaluation / aggregation
@@ -69,14 +71,45 @@ Two halves. The **classifier** is a controlled four-operator comparison
 (GCN / GraphSAGE / GIN / GAT) sharing one skeleton â€” depth, width, norm,
 readout, head and training loop identical, only the conv differs, so a gap is
 attributable to aggregation rather than capacity. Extensions each live in their
-own `models_*.py` + `train_*.py` pair (`_edge`, `_dmpnn`, `_hybrid`) and write to
+own `models_*.py` + `train_*.py` pair (`_edge`, `_hybrid`) and write to
 their own `results/` subtree, deliberately kept out of `MODELS` so the core
-comparison stays edge-blind and descriptor-blind. The **generator** is a GRU
+comparison stays edge-blind and descriptor-blind. D-MPNN was dropped (no
+consistent gain, and it cost 60 runs at 10 seeds). The **generator** is a GRU
 over SELFIES conditioned on `z`, trained by GRPO against the frozen classifier
 ensemble plus QED, SA and a discriminator.
 
 `src/datasets.py` owns `ROOT` (repo root) and the processed-graph cache; every
 module reads data through it rather than building paths itself.
+
+### The run contract — read this before touching the featurizer
+
+Checkpoints here are bare `state_dict`s, and `build_model`'s **default
+arguments were the only thing making them loadable** — no caller ever passed
+`in_dim`. So changing a default silently invalidated all 73 committed
+checkpoints, and `load_dataset` keyed its cache on the dataset name alone, so a
+featurizer change could return stale graphs and never raise.
+
+- `featurize.FEATURE_ID` is a **content hash of the featurizer's own output** on
+  a fixed probe set — derived, not declared. If you add a feature no probe
+  exercises, extend `_PROBE` in the same diff or the guard goes blind.
+- `train.py` records it in `metrics.json` with `node_dim`, `hidden`,
+  `num_layers`, `dropout`, `heads`, `norm`, `virtual_node`, `split`.
+- `featurize.run_contract(run_dir)` validates it and **returns the recorded
+  architecture**, so `reward.load_frozen_classifier` and
+  `eval_external_holdout` rebuild a checkpoint the way it was trained rather
+  than the way today's defaults happen to be.
+- `datasets.cache_path` keys on `FEATURE_ID`, so a mismatched cache is not
+  detected — it simply isn't found, and rebuilds.
+- Pre-contract checkpoints live in `results_v1/` and are **refused by design**.
+  `results/generator/` was deliberately left in place: those checkpoints are
+  self-describing and feature-independent.
+
+`src/brics.py` is the shared fragment substrate for the classifier's motif
+family and the generator's assembly engine. Its `vocab()` takes the caller's
+own corpus: the classifier must build it from **training-fold molecules only**
+(a full-dataset vocabulary is transductive leakage under a scaffold split),
+while the generator needs a lower floor because pruning is a reconstruction
+failure there.
 
 ### Invariants that are load-bearing, not stylistic
 
@@ -92,10 +125,21 @@ Violating any of these silently invalidates results rather than raising:
   half is all class 1, so val/test come out 100% positive and ROC-AUC is
   undefined. Consequence: absolute numbers are **not** comparable to the
   widely quoted 0.65â€“0.70 BBBP figures. Comparable range is ~0.90.
-- **Frozen means `eval()`, not just `requires_grad_(False)`.** The classifier
-  and `D_phi` use `BatchNorm1d`; in train mode a molecule's reward would depend
-  on which candidates shared its group, so the reward would stop being a
-  function of the molecule.
+- **Normalization defaults to LayerNorm, and that is a correctness choice.**
+  `BatchNorm1d` made a molecule's logit depend on what shared its batch — fine
+  for a classifier, a bug for a frozen reward, since the same molecule earned a
+  different reward depending on its GRPO group. Measured by
+  `python -m src.models` on a 4-graph batch in train mode: **batch drifts
+  3.97e-02, layer 3.7e-09, graph 6.0e-08**. `eval()` is *still* load-bearing
+  for `nn.Dropout`, and `reward.py`'s alone-vs-crowded assertion stays because
+  it is what catches a regression back to BatchNorm.
+- **`split.group_keys` is the single definition of group identity.**
+  `scaffold_split` and `check_split` must group identically or the leak
+  assertion fires on every run. Acyclic molecules used to collapse into one
+  `""` group that always landed in train (95/1965 BBBP, 311/7805 B3DB — never
+  tested); they now cluster by Tanimoto. If a change makes `check_split` fire,
+  fix the grouping — **do not weaken the assertion**, or every number in the
+  repo becomes unverifiable.
 - **Thread count is part of the configuration.** OpenMP changes float reduction
   order and the GRPO loop is chaotic. `OMP_NUM_THREADS` is unreliable (36
   silently binds 18 on the dev machine); pass `--threads` so

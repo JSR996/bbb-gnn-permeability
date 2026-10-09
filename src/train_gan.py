@@ -36,7 +36,7 @@ from torch_geometric.data import Batch
 
 from .datasets import ROOT, _load_raw
 from .diversity import reference_stats, summarize
-from .featurize import smiles_to_graph
+from .featurize import FEATURE_ID, graphs_from_smiles
 from .generator import CKPT_DIR, SelfiesGenerator
 from .grpo import clipped_loss, group_advantages
 from .models import build_model
@@ -51,8 +51,15 @@ WF = {"D": 0.3, "C": 1.5, "Q": 0.5, "S": 0.5}   # then permeability
 
 
 def _graphs(smiles: list[str]) -> Batch | None:
-    """Featurize the sanitizable subset. None if nothing survives."""
-    graphs = [g for g in (smiles_to_graph(s) for s in smiles if s) if g is not None]
+    """Featurize the sanitizable subset. None if nothing survives.
+
+    Routed through featurize.graphs_from_smiles so the discriminator sees
+    exactly what the classifier sees. These were separate paths: reward.py
+    canonicalized first, this file featurized the generator's raw output in
+    three places. They agreed only by accident, and a disagreement would
+    present as a training instability rather than as a bug.
+    """
+    graphs = [g for g in graphs_from_smiles(smiles) if g is not None]
     return Batch.from_data_list(graphs) if graphs else None
 
 
@@ -77,9 +84,12 @@ class Discriminator(nn.Module):
         was_training = self.training
         self.eval()
         out = np.zeros(len(smiles))
-        keep = [i for i, s in enumerate(smiles) if s and smiles_to_graph(s) is not None]
+        # One featurization pass, not two: this used to call smiles_to_graph
+        # to build `keep` and then again inside _graphs.
+        graphs = graphs_from_smiles(smiles)
+        keep = [i for i, g in enumerate(graphs) if g is not None]
         if keep:
-            batch = _graphs([smiles[i] for i in keep]).to(device)
+            batch = Batch.from_data_list([graphs[i] for i in keep]).to(device)
             out[keep] = torch.sigmoid(self(batch)).cpu().numpy()
         self.train(was_training)
         return out
@@ -348,6 +358,10 @@ def train(
         # so a later comparison between runs cannot silently compare against a
         # different baseline.
         (out_dir / "config.json").write_text(json.dumps({
+            # Which classifier produced this run's reward. Without it a run
+            # trained against a re-featurized classifier is indistinguishable
+            # from one trained against the old one.
+            "feature_id": FEATURE_ID,
             "dataset": dataset, "steps": steps, "group_size": group_size,
             "ppo_epochs": ppo_epochs, "n_d": n_d, "lr_g": lr_g, "lr_d": lr_d,
             "clip_eps": clip_eps, "kl_coef": kl_coef,

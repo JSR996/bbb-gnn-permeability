@@ -266,7 +266,14 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--patience", type=int, default=30)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--threads", type=int, default=None,
+                   help="torch.set_num_threads; authoritative where "
+                        "OMP_NUM_THREADS is not (CLAUDE.md). Pinned because "
+                        "OpenMP changes float reduction order.")
     args = p.parse_args()
+    if args.threads is not None:
+        torch.set_num_threads(args.threads)
+
 
     if args.run_all:
         run_all(epochs=args.epochs, patience=args.patience, device=args.device)

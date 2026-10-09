@@ -13,7 +13,6 @@ after any subset of the training scripts, not just after everything):
     results/descriptor_baseline_v2_runs.csv        <- descriptor_baseline_v2.py (LightGBM)
     results/edge_ablation/edge_ablation_runs.csv   <- src/train_edge.py (gine/gat_edge/sage_edge)
     results/hybrid/hybrid_runs.csv                 <- src/train_hybrid.py (gcn/sage/gin/gat + descriptors)
-    results/dmpnn/dmpnn_runs.csv                   <- src/train_dmpnn.py
 
     results/edge_ablation/legacy_gine_ablation_results.csv (, if you haven't re-run gine under
     train_edge.py yet) is picked up too, but a row for the same
@@ -42,7 +41,6 @@ SOURCES = [
     ("edge_ablation", ROOT / "results" / "edge_ablation" / "edge_ablation_runs.csv", "gnn"),
     ("gine_ablation_legacy", ROOT / "results" / "edge_ablation" / "legacy_gine_ablation_results.csv", "gnn"),
     ("hybrid", ROOT / "results" / "hybrid" / "hybrid_runs.csv", "gnn"),
-    ("dmpnn", ROOT / "results" / "dmpnn" / "dmpnn_runs.csv", "gnn"),
     ("descriptor_gbm", ROOT / "results" / "descriptor_baseline_v2_runs.csv", "descriptor"),
 ]
 

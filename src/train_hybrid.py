@@ -36,10 +36,12 @@ from .evaluate import best_threshold, compute_metrics
 from .hybrid_features import compute_descriptor_matrix, standardize_with_train_stats
 from .models import MODELS
 from .models_hybrid import build_hybrid_model, count_parameters
-from .split import check_split, scaffold_split
+from .featurize import EDGE_DIM, FEATURE_ID, NODE_DIM
+from .split import (SPLIT_ID, SPLIT_ID_MURCKO_ONLY, check_split,
+                    scaffold_split)
 
 RESULTS_DIR = ROOT / "results" / "hybrid"
-SEEDS = [0, 1, 2]
+SEEDS = list(range(10))
 DATASET_NAMES = ["bbbp", "b3db"]
 
 
@@ -74,6 +76,8 @@ def train_hybrid_one(
     num_layers: int = 3,
     dropout: float = 0.3,
     heads: int = 4,
+    norm: str = "layer",
+    cluster_acyclic: bool = True,
     device: str = "cpu",
     out_dir: Path | None = None,
     verbose: bool = True,
@@ -85,8 +89,10 @@ def train_hybrid_one(
     smiles = [g.smiles for g in graphs]
     labels = [int(g.y.item()) for g in graphs]
 
-    train_idx, val_idx, test_idx = scaffold_split(smiles, seed=seed, verbose=False)
-    check_split(smiles, train_idx, val_idx, test_idx, labels)
+    train_idx, val_idx, test_idx = scaffold_split(
+        smiles, seed=seed, verbose=False, cluster_acyclic=cluster_acyclic)
+    check_split(smiles, train_idx, val_idx, test_idx, labels,
+                cluster_acyclic=cluster_acyclic)
 
     # Descriptors computed once for the whole dataset, then standardized using
     # TRAIN-fold statistics only -- val/test never influence the scaling.
@@ -106,7 +112,8 @@ def train_hybrid_one(
     test_loader = DataLoader(test_set, batch_size=256)
 
     model = build_hybrid_model(model_name, hidden=hidden, num_layers=num_layers,
-                                dropout=dropout, heads=heads).to(dev)
+                                dropout=dropout, heads=heads,
+                               norm=norm).to(dev)
 
     n_pos = sum(labels[i] for i in train_idx)
     n_neg = len(train_idx) - n_pos
@@ -171,6 +178,17 @@ def train_hybrid_one(
         "dataset": dataset_name,
         "seed": seed,
         "n_parameters": count_parameters(model),
+        # The run contract -- see train.py. Validated and replayed by
+        # featurize.run_contract when a checkpoint is reloaded as a reward.
+        "feature_id": FEATURE_ID,
+        "node_dim": NODE_DIM,
+        "edge_dim": EDGE_DIM,
+        "hidden": hidden,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "heads": heads,
+        "norm": norm,
+        "split": SPLIT_ID if cluster_acyclic else SPLIT_ID_MURCKO_ONLY,
         "best_epoch": best_epoch,
         "epochs_run": len(history),
         "train_seconds": round(time.time() - start, 1),

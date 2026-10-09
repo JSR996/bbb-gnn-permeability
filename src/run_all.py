@@ -1,8 +1,15 @@
 """Run every (model, dataset, seed) combination and collect results.
 
 Usage:
-    python -m src.run_all                 # all 24 runs
+    python -m src.run_all                 # every (model, dataset, seed)
     python -m src.run_all --datasets bbbp # subset
+    python -m src.run_all --threads 6     # pin the reduction order
+
+Resumable: a run whose metrics.json already exists is skipped, so an
+interrupted sweep restarts where it stopped rather than from run 1. Pass
+--force to retrain regardless. At 10 seeds the sweep is a few hours of
+unattended CPU, which is long enough that "restart from the beginning" is
+the difference between losing minutes and losing a night.
 """
 
 from __future__ import annotations
@@ -11,6 +18,8 @@ import argparse
 import json
 import traceback
 
+import torch
+
 import numpy as np
 import pandas as pd
 
@@ -18,7 +27,7 @@ from .datasets import ROOT, load_dataset
 from .models import MODELS
 from .train import RESULTS_DIR, train_one
 
-SEEDS = [0, 1, 2]
+SEEDS = list(range(10))
 DATASET_NAMES = ["bbbp", "b3db"]
 
 
@@ -71,13 +80,28 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--patience", type=int, default=30)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--norm", default="layer")
+    p.add_argument("--virtual-node", action="store_true")
+    p.add_argument("--force", action="store_true",
+                   help="retrain runs that already have a metrics.json")
+    p.add_argument("--threads", type=int, default=None,
+                   help="torch.set_num_threads; authoritative where "
+                        "OMP_NUM_THREADS is not (see CLAUDE.md)")
     args = p.parse_args()
+
+    # Pin in-process, before any tensor exists. OpenMP changes the order of
+    # float reductions, so the thread count is part of the configuration --
+    # and OMP_NUM_THREADS binds unreliably on this machine.
+    if args.threads is not None:
+        torch.set_num_threads(args.threads)
+        print(f"threads: requested {args.threads}, "
+              f"torch reports {torch.get_num_threads()}")
 
     for name in args.datasets:  # warm the caches once, not per run
         load_dataset(name, verbose=False)
 
     total = len(args.datasets) * len(args.models) * len(args.seeds)
-    done, failed = 0, []
+    done, skipped, failed = 0, 0, []
     for dataset in args.datasets:
         for model in args.models:
             for seed in args.seeds:

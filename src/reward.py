@@ -21,7 +21,7 @@ from rdkit import Chem, RDLogger
 from rdkit.Chem import QED, Descriptors, RDConfig
 from torch_geometric.data import Batch
 
-from .featurize import smiles_to_graph
+from .featurize import run_contract, smiles_to_graph
 from .pareto import reduce_objectives
 from .models import build_model
 from .models_edge import EDGE_MODELS, build_edge_model
@@ -66,10 +66,18 @@ def load_frozen_classifier(
 ):
     """Return C(mols) -> np.ndarray of mean P(permeable), frozen and stationary.
 
-    eval() is load-bearing, not hygiene: the classifier uses BatchNorm1d, so in
-    train mode C(m) would depend on which other molecules share the batch. The
-    reward would then vary with group composition and the "frozen C is
-    stationary in k" premise of Section 3.1 would be quietly false.
+    eval() is still load-bearing, for a smaller reason than it used to be. The
+    classifier now defaults to LayerNorm, which is batch-independent by
+    construction, so C(m) no longer varies with group composition even in train
+    mode. `nn.Dropout` does, so the forward pass is still stochastic without
+    eval() and the "frozen C is stationary in k" premise of Section 3.1 would
+    still be false. The batch-invariance assertion in _self_check stays: it is
+    cheap, and it is what catches a regression back to BatchNorm.
+
+    Architecture is replayed from each run's metrics.json rather than taken
+    from build_model's defaults. Those defaults were the de-facto contract --
+    no caller ever passed in_dim -- so changing one invalidated every committed
+    checkpoint and surfaced as `size mismatch for convs.0` far from the cause.
 
     Checkpoints are combined within a single seed only -- each seed defines a
     different scaffold split (README), so mixing seeds mixes models that saw
@@ -79,11 +87,14 @@ def load_frozen_classifier(
     nets = []
     for name in models:
         ckpt = _checkpoint(root, dataset, name, seed)
+        # Raises if the run was trained under a different featurizer, and
+        # returns the architecture it was trained with.
+        arch = run_contract(ckpt.parent)
         # Edge-aware operators carry a different skeleton class, so they must
         # be rebuilt by the module that trained them or the state_dict is
         # being loaded into the wrong architecture.
         builder = build_edge_model if name in EDGE_MODELS else build_model
-        net = builder(name).to(device)
+        net = builder(name, **arch).to(device)
         net.load_state_dict(torch.load(ckpt, map_location=device))
         net.eval()
         net.requires_grad_(False)

@@ -274,6 +274,44 @@ reports the survivor spread and withholds the recommendation below sd 0.02.
 
 ## 5. Engineering
 
+### 5.0 LayerNorm is the default and it costs accuracy on BBBP **[measured]**
+
+`BatchNorm1d` makes a molecule's logit a function of what shares its batch.
+That is a training detail for a classifier and a correctness problem for a
+frozen reward: under BatchNorm in train mode the same molecule earns a
+different reward depending on which candidates land in its GRPO group, so the
+reward stops being a function of the molecule. The default moved to LayerNorm,
+which is batch-independent by construction. Measured by `python -m src.models`,
+gin on a 4-graph batch in train mode: batch drifts **3.97e-02**, layer 3.7e-09,
+graph 6.0e-08.
+
+**It is not free, and the trade is not obviously worth it.** BatchNorm vs
+LayerNorm, 10 seeds, paired on seed (identical split), test ROC-AUC:
+
+| dataset | gcn | sage | gin | gat |
+|---|---|---|---|---|
+| BBBP | **+0.0215** +/- 0.0079 | +0.0459 +/- 0.0251 | +0.0269 +/- 0.0146 | **+0.0168** +/- 0.0058 |
+| B3DB | +0.0030 +/- 0.0032 | -0.0018 +/- 0.0041 | +0.0096 +/- 0.0053 | -0.0007 +/- 0.0032 |
+
+(SEM; bold exceeds 2 SEM. Pooled over all 8 cells, n=80:
+**batch - layer = +0.0152 +/- 0.0042**.)
+
+BatchNorm is better on BBBP in all four cells and indistinguishable from zero
+on B3DB in all four. That pattern is a **small-dataset effect**: BBBP trains on
+1572 molecules where batch statistics regularize, B3DB on 6244 where they do
+not matter. Runs are under `results/norm_arm_batch/`; GraphNorm was also tried
+and is tied with LayerNorm (+0.0072 +/- 0.0108 on bbbp/gcn), so it does not
+recover the gap.
+
+**The honest counterargument against the current default.** The
+batch-dependence hazard was *already* contained by the `eval()` calls in
+`reward.py` and `train_gan.py`, which `reward._self_check` asserts. LayerNorm
+buys structural immunity to a bug class this project has repeatedly been bitten
+by, at a measured ~0.015-0.02 ROC-AUC on the smaller dataset. That is a
+judgement call, not a measurement, and it is **unresolved**. Flipping it is
+`--norm batch` plus a re-sweep; `featurize.run_contract` replays whichever norm
+a checkpoint recorded, so the generation half does not break either way.
+
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked
 by the proxy (403), so torch has to come from PyPI. There is no

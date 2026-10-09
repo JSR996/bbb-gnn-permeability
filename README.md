@@ -17,12 +17,17 @@ kept separate so the core comparison stays clean:
 |---|---|---|
 | **base** | the four operators, identical skeleton | `src/models.py`, `src/train.py` |
 | **edge ablation** | bond features via `gine`, `gat_edge`, `sage_edge` | `src/models_edge.py`, `src/train_edge.py` |
-| **D-MPNN** | Chemprop-style directed bond-level message passing | `src/models_dmpnn.py`, `src/train_dmpnn.py` |
 | **hybrid** | graph embedding **+ 8 RDKit descriptors** (incl. a CNS-MPO proxy) | `src/models_hybrid.py`, `src/hybrid_features.py`, `src/train_hybrid.py` |
 | **descriptor baseline** | LightGBM on the same descriptors, same scaffold folds | `baselines/descriptor_baseline_v2.py` |
 
 > The hybrid family **does** use hand-crafted descriptors. The "no descriptors"
-> statement applies to the base, edge and D-MPNN families only.
+> statement applies to the base and edge families only.
+
+> **Being regenerated.** The tables below are from the 3-seed, BatchNorm,
+> Murcko-only-split configuration. The repo has since moved to 10 seeds,
+> LayerNorm and a Murcko+Tanimoto split (see `CLAUDE.md`, "The run contract"),
+> and every number here is superseded once `python -m src.collect_all` reruns.
+> D-MPNN has been dropped.
 
 ## Results at a glance
 
@@ -111,9 +116,9 @@ Raw datasets live in `data/raw/` and are read from there by every module.
 | `models.py`, `train.py`, `run_all.py` | base four-operator comparison (4 × 2 × 3 = 24 runs) |
 | `evaluate.py` | metrics; threshold chosen on validation only |
 | `ensemble.py` | soft vote, rank average, logistic stacking (within-seed) |
-| `models_edge.py`, `train_edge.py` | edge-aware ablation (18 runs) |
-| `models_dmpnn.py`, `train_dmpnn.py` | D-MPNN (6 runs) |
-| `models_hybrid.py`, `hybrid_features.py`, `train_hybrid.py` | GNN + descriptor hybrid (24 runs) |
+| `models_edge.py`, `train_edge.py` | edge-aware ablation (60 runs) |
+| `brics.py` | BRICS fragments + motif graphs; shared with the generator |
+| `models_hybrid.py`, `hybrid_features.py`, `train_hybrid.py` | GNN + descriptor hybrid (80 runs) |
 | `external_holdout.py`, `eval_external_holdout.py` | build leak-free holdouts; score every checkpoint on them |
 | `paired_analysis.py` | paired-seed architecture comparison |
 | `collect_all.py` | merge every result table into `results/master_comparison.csv` |
@@ -125,19 +130,21 @@ Raw datasets live in `data/raw/` and are read from there by every module.
 
 ```bash
 # --- smoke tests (no training) ---
-python -m src.featurize                    # featurizer
-python -m src.models                       # forward-pass shapes
+python -m src.featurize                    # featurizer + FEATURE_ID
+python -m src.models                       # shapes, norms, batch independence
+python -m src.brics                        # fragment decompose/reassemble
+python -m src.split                        # grouping + the leak-assertion trap
 python -m src.datasets                     # build caches, verify splits
 
 # --- core comparison ---
 python -m src.train --model gcn --dataset bbbp --seed 0     # one run
-python -m src.run_all                      # all 24 runs
+python -m src.run_all                      # all 80 runs (10 seeds)
+python -m src.run_all --threads 6          # pin the reduction order
 python -m src.ensemble                     # combine predictions (within seed)
 
 # --- extensions ---
-python -m src.train_edge --run-all         # 18 runs: gine / gat_edge / sage_edge
-python -m src.train_dmpnn --run-all        # 6 runs
-python -m src.train_hybrid --run-all       # 24 runs
+python -m src.train_edge --run-all         # 60 runs: gine / gat_edge / sage_edge
+python -m src.train_hybrid --run-all       # 80 runs
 python baselines/descriptor_baseline_v2.py # LightGBM baseline (no torch needed)
 
 # --- external evaluation + aggregation ---
@@ -383,9 +390,9 @@ duplicate copies disagree on the label are dropped entirely rather than guessed.
 
 ## Known limitations
 
-- **Three seeds.** Seed-to-seed std is large on BBBP; most architecture
-  differences are not distinguishable from noise. More seeds and paired
-  bootstrap CIs are needed before ranking models.
+- **Ten seeds** (was three). Seed-to-seed std was large enough on BBBP that
+  most architecture differences were indistinguishable from noise; paired
+  bootstrap CIs are still to do.
 - **Tiny external holdouts** (n = 55–59). Adenot is saturated and uninformative;
   Wang results swing on single-digit error counts.
 - **Hybrid model uses descriptors**, including a CNS-MPO *proxy* (5 of 6 terms;

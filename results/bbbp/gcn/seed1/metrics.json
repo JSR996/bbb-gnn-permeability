@@ -15,7 +15,7 @@
   "split": "murcko+tanimoto@0.6",
   "best_epoch": 1,
   "epochs_run": 31,
-  "train_seconds": 17.4,
+  "train_seconds": 23.1,
   "val": {
     "roc_auc": 0.7928814842862552,
     "pr_auc": 0.907843948590581,

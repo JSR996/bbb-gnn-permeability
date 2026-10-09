@@ -32,9 +32,17 @@ DATASET_NAMES = ["bbbp", "b3db"]
 
 
 def collect() -> pd.DataFrame:
-    """Gather every metrics.json under results/ into a tidy frame."""
+    """Gather the BASE runs into a tidy frame.
+
+    Iterates the dataset directories explicitly rather than globbing
+    `*/*/seed*`: results/ also holds arm studies and diagnostics laid out the
+    same way (results/norm_split_diag/<arm>/seed*), and the glob silently
+    folded 30 of those into this table as if they were base runs.
+    """
     rows = []
-    for path in sorted(RESULTS_DIR.glob("*/*/seed*/metrics.json")):
+    paths = sorted(p for name in DATASET_NAMES
+                   for p in (RESULTS_DIR / name).glob("*/seed*/metrics.json"))
+    for path in paths:
         r = json.loads(path.read_text())
         rows.append({
             "dataset": r["dataset"], "model": r["model"], "seed": r["seed"],
@@ -106,10 +114,17 @@ def main() -> None:
         for model in args.models:
             for seed in args.seeds:
                 done += 1
+                out_dir = RESULTS_DIR / dataset / model / f"seed{seed}"
+                if (out_dir / "metrics.json").exists() and not args.force:
+                    print(f"[{done}/{total}] {dataset}/{model}/seed{seed} "
+                          f"-- already done, skipping")
+                    skipped += 1
+                    continue
                 print(f"\n[{done}/{total}] {dataset}/{model}/seed{seed}")
                 try:
                     train_one(model_name=model, dataset_name=dataset, seed=seed,
                               epochs=args.epochs, patience=args.patience,
+                              norm=args.norm, virtual_node=args.virtual_node,
                               device=args.device, verbose=True)
                 except Exception:
                     print(f"    FAILED:\n{traceback.format_exc()}")

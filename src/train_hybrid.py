@@ -243,6 +243,11 @@ def run_all(models=MODELS, datasets=DATASET_NAMES, seeds=SEEDS,
         for model in models:
             for seed in seeds:
                 done += 1
+                out_dir = RESULTS_DIR / dataset / model / f"seed{seed}"
+                if (out_dir / "metrics.json").exists():
+                    print(f"[{done}/{total}] hybrid {dataset}/{model}/seed{seed} "
+                          f"-- already done, skipping")
+                    continue
                 print(f"\n[{done}/{total}] hybrid {dataset}/{model}/seed{seed}")
                 try:
                     train_hybrid_one(model_name=model, dataset_name=dataset, seed=seed,

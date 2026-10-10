@@ -102,7 +102,28 @@ class MotifGNN(nn.Module):
         heads: int = 4,
         norm: str = "graph",
         virtual_node: bool = False,
+        intra_only: bool = False,
+        fuse: bool = True,
     ) -> None:
+        """`intra_only` / `fuse` select the two arms this class can be.
+
+        `intra_only=True, fuse=False` is arm 1a as first built: level 1 sees
+        ONLY intra-fragment bonds, so the ~4 BRICS cut bonds per molecule are
+        deleted from the atom graph and survive only as coarse fragment-level
+        edges. Measured on BBBP over 10 paired seeds, that costs
+        **-0.1177 +/- 0.0103** against the flat base -- about 3x the seed
+        noise, in all four operators. The junctions BRICS cuts are amides,
+        esters and aryl-aryl couplings, i.e. the pharmacophores, so removing
+        them from atom-level message passing removes the signal.
+
+        `intra_only=False, fuse=True` (the default) is the repair: level 1 runs
+        over the FULL atom graph, exactly as the flat model does, and the motif
+        graph is an ADDITIONAL readout channel concatenated at the head. That
+        makes the family strictly additive -- the atom pathway is the base
+        model, and the head can learn to ignore the motif half -- so it tests
+        whether fragment structure ADDS anything rather than whether it can
+        replace atom-level detail.
+        """
         super().__init__()
         if conv not in BRICS_MODELS:
             raise ValueError(f"unknown conv {conv!r}; expected one of {BRICS_MODELS}")
@@ -113,6 +134,8 @@ class MotifGNN(nn.Module):
             )
         self.conv_type = conv
         self.norm_type = norm
+        self.intra_only = intra_only
+        self.fuse = fuse
 
         # Level 1 -- atoms, intra-fragment edges only.
         self.atom_convs, self.atom_norms = nn.ModuleList(), nn.ModuleList()
@@ -135,8 +158,10 @@ class MotifGNN(nn.Module):
             self.motif_norms.append(module)
 
         self.dropout = nn.Dropout(dropout)
+        # fuse -> [atom mean, atom max, motif mean, motif max]
+        head_in = (4 if fuse else 2) * hidden
         self.head = nn.Sequential(
-            nn.Linear(2 * hidden, hidden), nn.ReLU(),
+            nn.Linear(head_in, hidden), nn.ReLU(),
             nn.Dropout(dropout), nn.Linear(hidden, 1),
         )
 
@@ -144,9 +169,9 @@ class MotifGNN(nn.Module):
         x, edge_index, batch = data.x, data.edge_index, data.batch
         frag_id, motif_edge_index = data.frag_id, data.motif_edge_index
 
-        # Keep only bonds whose endpoints share a fragment. The cut bonds are
-        # not discarded -- they reappear as level-2 edges.
-        if edge_index.numel():
+        # arm 1a kept only intra-fragment bonds; the default keeps them all,
+        # so the atom pathway matches the flat model exactly.
+        if self.intra_only and edge_index.numel():
             intra = frag_id[edge_index[0]] == frag_id[edge_index[1]]
             atom_edge_index = edge_index[:, intra]
         else:
@@ -173,9 +198,13 @@ class MotifGNN(nn.Module):
             h = torch.relu(h)
             h = self.dropout(h)
 
-        graph_repr = torch.cat([global_mean_pool(h, frag_batch),
+        motif_repr = torch.cat([global_mean_pool(h, frag_batch),
                                 global_max_pool(h, frag_batch)], dim=1)
-        return self.head(graph_repr).squeeze(-1)
+        if self.fuse:
+            atom_repr = torch.cat([global_mean_pool(x, batch),
+                                   global_max_pool(x, batch)], dim=1)
+            motif_repr = torch.cat([atom_repr, motif_repr], dim=1)
+        return self.head(motif_repr).squeeze(-1)
 
 
 def build_brics_model(conv: str, **kwargs) -> MotifGNN:

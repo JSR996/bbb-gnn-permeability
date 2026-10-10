@@ -363,6 +363,60 @@ dataset-size pattern as 5.0: the gain appears where data is scarce.
 `models_hybrid` and `models_tox` raise `NotImplementedError` on
 `virtual_node=True`. Runs are under `results/virtual_node/`.
 
+### 5.0c The hierarchical motif model does not work, in two distinct ways **[measured]**
+
+Arm 1a. The hypothesis was that permeability is governed by functional groups
+rather than isolated atoms -- a carboxylic acid forbids passive diffusion as a
+unit, and in a flat atom graph that fact is spread over three atoms and diluted
+by message passing. Put the fragment in as a node and the model should see it
+directly. Two versions were built; both are in `src/models_brics.py` behind
+`intra_only` / `fuse`.
+
+**Version 1 -- fragments REPLACE atom detail.** Level 1 message-passes over
+intra-fragment bonds only, pools per fragment, then a motif GNN runs over the
+BRICS junction graph. BBBP, 10 seeds, paired against the flat base:
+
+| gcn | sage | gin | gat | pooled |
+|---|---|---|---|---|
+| -0.1417 | -0.1108 | -0.1156 | -0.1026 | **-0.1161 +/- 0.0107** |
+
+All four significant, same direction, about **3x the seed noise**. The reason is
+structural: BRICS cuts amides, esters and aryl-aryl couplings -- the
+pharmacophores -- so restricting level 1 to intra-fragment bonds deletes
+exactly the bonds that carry the signal, and a coarse fragment-to-fragment
+edge does not replace them.
+
+**Version 2 -- fragments ADDED on top.** Level 1 runs over the full atom graph
+at the same depth as the flat model, and the motif readout is concatenated at
+the head, so the atom pathway *is* the base model and the head can ignore the
+rest. Strictly additive by construction. 10 seeds, paired, both datasets:
+
+| | gcn | sage | gin | gat | pooled |
+|---|---|---|---|---|---|
+| BBBP | -0.0048 | +0.0007 | -0.0062 | -0.0101 | -0.0051 +/- 0.0047 |
+| B3DB | -0.0089 | **-0.0084** | +0.0023 | +0.0020 | -0.0033 +/- 0.0021 |
+
+Pooled over all 8 cells (n=80): **-0.0042 +/- 0.0026**. One cell is
+significant and it is negative. Cost is 258 s/run against 194 s.
+
+**The two together say more than either alone**: the motif view carries no
+information the atom graph does not already have. Removing atom detail is
+catastrophic; adding fragment structure on top is nothing.
+
+And it is not that the head ignored the channel -- mean |weight| on the motif
+half of the head is **0.849x** the atom half (range 0.79-0.90 over 12
+checkpoints), so the signal is being used and is simply redundant. Treat that
+ratio as suggestive: weight magnitude is a weak attribution proxy, sensitive to
+input scale and normalization. The accuracy numbers are the result.
+
+**Consequences.** Arm 1c (HRM over the motif graph) is dropped -- it would
+stack an unvalidated architecture on a substrate measured to add nothing. Arm
+1b (downscaled HRM on the atom graph) is independent and still open, though it
+was always the weakest-justified. **For the generator this changes nothing**:
+the case for BRICS there is validity by construction and an action space that
+cannot emit atom spam, which is a property of the action space, not of the
+classifier.
+
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked
 by the proxy (403), so torch has to come from PyPI. There is no

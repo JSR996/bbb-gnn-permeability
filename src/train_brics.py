@@ -72,6 +72,9 @@ def train_one(
     heads: int = 4,
     norm: str = "graph",
     cluster_acyclic: bool = True,
+    motif_layers: int = 2,
+    intra_only: bool = False,
+    fuse: bool = True,
     device: str = "cpu",
     out_dir: Path | None = None,
     verbose: bool = True,
@@ -107,10 +110,16 @@ def train_one(
     val_loader = DataLoader(val_set, batch_size=256)
     test_loader = DataLoader(test_set, batch_size=256)
 
+    # atom_layers == num_layers so the atom pathway is EXACTLY the flat
+    # model's depth. The motif graph is then strictly additional, and the head
+    # can learn to ignore it -- which is what makes this a test of whether
+    # fragment structure adds anything rather than whether it can replace
+    # atom-level detail.
     model = build_brics_model(model_name, hidden=hidden,
-                              atom_layers=num_layers - 1,
-                              motif_layers=num_layers - 1,
-                              dropout=dropout, heads=heads, norm=norm).to(dev)
+                              atom_layers=num_layers,
+                              motif_layers=motif_layers,
+                              dropout=dropout, heads=heads, norm=norm,
+                              intra_only=intra_only, fuse=fuse).to(dev)
 
     # pos_weight from the training fold only. Both datasets skew positive, so
     # this mainly helps accuracy/F1; ROC-AUC is threshold-free.
@@ -176,6 +185,9 @@ def train_one(
     result = {
         "model": model_name,
         "family": "brics_motif",
+        "motif_layers": motif_layers,
+        "intra_only": intra_only,
+        "fuse": fuse,
         "dataset": dataset_name,
         "seed": seed,
         "n_parameters": count_parameters(model),
@@ -238,6 +250,11 @@ def main() -> None:
     p.add_argument("--num-layers", type=int, default=3)
     p.add_argument("--dropout", type=float, default=0.3)
     p.add_argument("--heads", type=int, default=4)
+    p.add_argument("--motif-layers", type=int, default=2)
+    p.add_argument("--intra-only", action="store_true",
+                   help="arm 1a: level 1 sees only intra-fragment bonds")
+    p.add_argument("--no-fuse", action="store_true",
+                   help="drop the atom-level readout channel")
     p.add_argument("--norm", choices=NORMS, default="graph",
                    help="layer (default) is batch-independent; batch reproduces "
                         "the pre-contract runs")
@@ -262,6 +279,8 @@ def main() -> None:
         weight_decay=args.weight_decay, batch_size=args.batch_size,
         hidden=args.hidden, num_layers=args.num_layers, dropout=args.dropout,
         heads=args.heads, norm=args.norm,
+        motif_layers=args.motif_layers,
+        intra_only=args.intra_only, fuse=not args.no_fuse,
         cluster_acyclic=not args.murcko_only_split,
         device=args.device,
     )

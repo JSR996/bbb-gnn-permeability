@@ -170,6 +170,7 @@ def train(
     warm_start: str | None = None,
     threads: int | None = None,
     generator: str = "selfies",
+    ent_coef: float = 0.0,
     # The reward ensemble's seed is a ROBUSTNESS AXIS, not a tuning knob. All
     # ten seeds carry gin+gat+gine on element-wise identical folds, so any one
     # of them is a legal ensemble, and member-mean AUC spans 0.818-0.914. A
@@ -293,13 +294,61 @@ def train(
         gen.train()
         stats = {}
         for _ in range(ppo_epochs):
-            logp = gen.log_probs(roll["actions"], roll["z"])
+            # One forward, two quantities. `log_probs` would recompute these
+            # same logits, and entropy needs the whole distribution rather than
+            # the chosen action's log-prob. Gathering from log_softmax here is
+            # bit-identical to what `log_probs` returns in both families.
+            lg = gen.logits(roll["actions"], roll["z"])
+            logp_all = torch.log_softmax(lg, dim=-1)
+            logp = logp_all.gather(-1, roll["actions"].unsqueeze(-1)).squeeze(-1)
+
+            # Illegal actions sit at -inf, so p is 0 and p*logp is 0 * -inf =
+            # nan. `torch.where` fixes the FORWARD value and still produces nan
+            # GRADIENTS, because it backprops through both branches and
+            # d/dx[exp(x)*x] at x=-inf is 0 * -inf = nan, which the zero branch
+            # then multiplies to 0 * nan = nan. Measured: identical forward,
+            # grad [nan,nan,nan] against [0.1175,-0.1175,0.0]. One nan step
+            # poisons every parameter and the NEXT multinomial raises
+            # "probability tensor contains inf, nan or element < 0".
+            #
+            # masked_fill's gradient is exactly zero at the filled positions, so
+            # the -inf never enters the backward pass at all. This is the same
+            # trap grpo.clipped_loss documents for the ratio: mask BEFORE the
+            # nonlinearity, because masking the product afterwards cannot
+            # recover it.
+            def _entropy():
+                lpa = logp_all
+                return -(lpa.exp() * lpa.masked_fill(torch.isinf(lpa), 0.0)).sum(-1)
+
+            # Build the entropy graph ONLY when the bonus is on. OpenMP changes
+            # the order of float reductions and this loop is chaotic, so extra
+            # autograd nodes shift allocation and drift the run: measured at
+            # 6.0e-05 on `kl` over 10 steps, which is small but makes an
+            # ent_coef=0 run no longer bit-comparable to the committed ones.
+            # Under no_grad the diagnostic is free and identity holds.
+            if ent_coef:
+                ent = _entropy()
+            else:
+                with torch.no_grad():
+                    ent = _entropy()
             with torch.no_grad():
                 logp_ref = ref.log_probs(roll["actions"], roll["z"])
             loss, stats = clipped_loss(
                 logp, roll["logp_old"], adv, mask=roll["mask"],
                 clip_eps=clip_eps, logp_ref=logp_ref, kl_coef=kl_coef,
             )
+            m = roll["mask"].float()
+            ent_mean = (ent * m).sum() / m.sum().clamp(min=1.0)
+            stats["entropy"] = ent_mean.item()
+            # Entropy acts on PER-STEP peakedness; KL anchors to pi_ref, which
+            # is a different quantity. With 5.5 decisions against SELFIES' 38.3,
+            # the same per-step entropy yields far lower molecule-level entropy
+            # -- diversity compounds over decisions and there are 7x fewer of
+            # them. And if the warm start is itself peaked, no kl_coef recovers
+            # diversity pi_ref never had. Default 0.0, so every committed run is
+            # byte-identical.
+            if ent_coef:
+                loss = loss - ent_coef * ent_mean
             opt_g.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(gen.parameters(), 1.0)
@@ -346,6 +395,17 @@ def train(
             "d_loss": d_loss,
             "w_C": w["C"],
             "unique": len({s for s in roll["smiles"] if s}) / group_size,
+            # Duplicates are not only a diversity metric: they shrink the set
+            # group_advantages actually standardizes over. It centres and scales
+            # across n_rankable rows, but repeated rows carry the same reward,
+            # so the spread comes from n_eff_group distinct candidates, not from
+            # group_size. At unique_smiles_frac 0.61-0.75 a group of 64 carries
+            # only ~40-48 distinct ones.
+            "n_eff_group": len({s for s, v in zip(roll["smiles"], terms["valid"]) if v and s}),
+            "eff_group_frac": (
+                len({s for s, v in zip(roll["smiles"], terms["valid"]) if v and s})
+                / max(int(terms["valid"].sum()), 1)
+            ),
             # Chemistry diagnostics. `unique` above is retained as the
             # contrast case: it is the metric that reported a healthy 40-step
             # run while the property spread had already collapsed, so it is
@@ -401,6 +461,7 @@ def train(
             "warm_start": str(warm),
             "generator": generator,
             "reward_seed": reward_seed,
+            "ent_coef": ent_coef,
             # Thread count is part of the configuration, not of the machine.
             # OpenMP changes the order of float reductions, and this training
             # loop is chaotic: a run that reproduces to 2e-16 at a matching
@@ -492,6 +553,27 @@ def _self_check() -> None:
 
     print(f"valid={terms['valid'].mean():.0%}  R={rewards.mean():+.3f}  "
           f"adv_std={stats['adv_std']:.3f}  ratio={stats['ratio_mean']:.4f}")
+    # The entropy bonus must produce FINITE gradients through a legality-masked
+    # distribution. The first version did not: identical forward value, nan
+    # gradients, and the failure surfaced one step later as a multinomial error
+    # far from its cause. Asserted on the real masked generator, not a toy
+    # tensor, because the -inf columns only exist once a mask is applied.
+    from .brics_assembly import ActionTable, build_specs
+    from .brics import vocab as _fvocab
+    from .brics_assembly import corpus as _corpus
+    _stoi = _fvocab(_corpus(["CCO", "c1ccccc1C(=O)O", "CC(=O)Oc1ccccc1C(=O)O",
+                             "CN(C)CCC=C1c2ccccc2CCc2ccccc21"]), min_count=1)
+    _bg = BricsGenerator(_stoi, emb=16, hidden=32, z_dim=8)
+    _roll = _bg.sample(8, max_len=12)
+    _lpa = torch.log_softmax(_bg.logits(_roll["actions"], _roll["z"]), dim=-1)
+    assert torch.isinf(_lpa).any(), "no masked actions, so this proves nothing"
+    _ent = -(_lpa.exp() * _lpa.masked_fill(torch.isinf(_lpa), 0.0)).sum(-1)
+    _m = _roll["mask"].float()
+    ((_ent * _m).sum() / _m.sum()).backward()
+    _g = _bg.out.weight.grad
+    assert _g is not None and torch.isfinite(_g).all(), "entropy bonus leaks nan gradients"
+    print(f"entropy bonus: finite grads through {int(torch.isinf(_lpa).sum())} masked logits")
+
     print("train_gan self-check passed")
 
 
@@ -535,6 +617,9 @@ if __name__ == "__main__":
     ap.add_argument("--generator", default="selfies", choices=sorted(GENERATORS),
                     help="brics assembles fragments and is valid by "
                          "construction; selfies decodes tokens")
+    ap.add_argument("--ent-coef", type=float, default=0.0,
+                    help="entropy bonus on the policy. Acts on per-step "
+                         "peakedness, which is the axis KL does not reach")
     ap.add_argument("--reward-seed", type=int, default=0,
                     help="scaffold-split seed of the frozen reward ensemble. A "
                          "robustness axis: vary it between runs, never within "
@@ -553,6 +638,7 @@ if __name__ == "__main__":
               alert_lambda=args.alert_lambda, w_alert=args.w_alert,
               drop=tuple(t for t in args.drop.split(",") if t),
               warm_start=args.warm_start, threads=args.threads,
-              generator=args.generator, reward_seed=args.reward_seed)
+              generator=args.generator, reward_seed=args.reward_seed,
+              ent_coef=args.ent_coef)
     else:
         _self_check()

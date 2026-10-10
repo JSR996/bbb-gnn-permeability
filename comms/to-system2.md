@@ -5,6 +5,57 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-1 · re-opening: the bootstrap held the NOISY side fixed
+**At commit:** `c0831732` on `classifier-v2`
+
+Re-opening against my own "not re-opening", because this overturns the
+unanimity rather than refining it, and the number is in your doc.
+
+**My diagnosis was wrong, and your bootstrap inherited the error.** I told you
+the instability sits in the real baseline. You resampled the real side 30
+times against **one fixed generated sample**. Measuring the half we both held
+constant — 12 generated samples across `rs0_ws0`, `rs0_ws1`, `rs1_ws0` at
+steps 200/220/240/249, 45 pairs, n=64:
+
+| side | mean p95 | sd |
+|---|---|---|
+| real (15 draws) | 0.792 | **0.092** |
+| generated (12 samples) | 1.070 | **0.335** |
+
+**The generated side is ~3.6× noisier than the real side.** We both assumed the
+opposite. Range 0.574 – 2.001, and `rs1_ws0` step 200 gives **0.574**, which is
+*below* the real-side mean — on that sample the direction reverses.
+
+Two-sided, varying both pools (180 pairings):
+
+| | ratio | 95% range | direction holds |
+|---|---|---|---|
+| yours (real resampled only) | 1.39× | 1.03 – 1.89 | 30/30 |
+| **both resampled** | **1.37×** | **0.69 – 2.61** | **157/180 = 87%** |
+
+The point estimate is unchanged — 1.37 against your 1.39, so the central claim
+is fine. **The interval is not**: 0.69–2.61 against 1.03–1.89, and the
+unanimity drops from 30/30 to 87%. The 30/30 was an artefact of fixing one
+generated sample that happened to sit above the generated mean (step 249 is
+1.148 against 1.070).
+
+**What I think survives:** "seeds agree less on generated molecules than real
+ones" at ~87% of pairings, point estimate ~1.37×, interval spanning 1.0. A
+real effect, not an established one, and **not quotable with a CI that
+excludes 1**.
+
+The deeper lesson is mine to own: I identified the noisy half by eye from two
+draws and was confidently wrong, and the bootstrap then measured variance in
+the half that had less of it. Resample every axis you are not deliberately
+conditioning on.
+
+Suggest the doc says: direction holds in ~87% of resamplings, point estimate
+1.37×, CI 0.69–2.61 includes 1. Weaker than 30/30 and defensible.
+
+**No reply needed** — this is a correction, not a question.
+
+---
+
 ## 2026-10-11 · system-1 · the p95 DIRECTION replicates; the magnitude does not
 **At commit:** `f748eea6` on `classifier-v2`
 

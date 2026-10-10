@@ -127,6 +127,43 @@ def motif_graph(mol: Chem.Mol) -> tuple[list[str], list[tuple[int, int]]]:
     return nodes, edges
 
 
+def atom_fragments(mol: Chem.Mol) -> tuple[list[int], list[tuple[int, int]]]:
+    """Per-atom fragment id, plus the motif edges between fragments.
+
+    The hierarchical classifier needs to know which fragment each ATOM belongs
+    to -- `decompose` returns fragments as separate molecules, which loses the
+    correspondence to the parent's atom indices. Returns `(frag_id, edges)`
+    where `frag_id[i]` is the fragment holding atom `i` of `mol`, and `edges`
+    are undirected `(frag_a, frag_b)` pairs.
+
+    A zero-cut molecule gives `([0] * n_atoms, [])`: one fragment, no edges.
+    That is ~1 molecule in 10 and needs no special case downstream.
+    """
+    bonds = list(BRICS.FindBRICSBonds(mol))
+    n = mol.GetNumAtoms()
+    if not bonds:
+        return [0] * n, []
+
+    bond_idx, dummy_labels = [], []
+    for (a1, a2), (t1, t2) in bonds:
+        bond_idx.append(mol.GetBondBetweenAtoms(a1, a2).GetIdx())
+        dummy_labels.append((int(t1), int(t2)))
+
+    fragmented = Chem.FragmentOnBonds(mol, bond_idx, dummyLabels=dummy_labels)
+    mapping: list[tuple[int, ...]] = []
+    Chem.GetMolFrags(fragmented, asMols=True, fragsMolAtomMapping=mapping)
+
+    frag_id = [-1] * n
+    for fid, atoms in enumerate(mapping):
+        for a in atoms:
+            if a < n:                      # indices >= n are the added dummies
+                frag_id[a] = fid
+    assert -1 not in frag_id, "every atom must belong to exactly one fragment"
+
+    edges = [(frag_id[a1], frag_id[a2]) for (a1, a2), _ in bonds]
+    return frag_id, edges
+
+
 def fragment_counts(smiles_list: list[str]) -> Counter:
     """How often each fragment occurs across a corpus. Unparseable input skipped."""
     counts: Counter = Counter()
@@ -203,6 +240,21 @@ def _self_check() -> None:
     # Single atoms appear in both datasets and must not crash.
     methane = Chem.MolFromSmiles("C")
     assert decompose(methane) == ([methane], []) or len(decompose(methane)[0]) == 1
+
+    # atom_fragments must partition the atoms and agree with decompose.
+    for smi in ("CC(=O)Oc1ccccc1C(=O)O", "c1ccc2c(c1)ccc1ccccc12", "C",
+                "CN(C)CCC=C1c2ccccc2CCc2ccccc21"):
+        m = Chem.MolFromSmiles(smi)
+        fid, edges = atom_fragments(m)
+        n_frags = len(set(fid))
+        assert len(fid) == m.GetNumAtoms()
+        assert n_frags == len(decompose(m)[0]), smi
+        assert len(edges) == len(decompose(m)[1]), smi
+        assert all(a != b for a, b in edges), "a motif edge must join two fragments"
+        # BRICS only cuts acyclic bonds, so a connected molecule's motif graph
+        # is a tree: edges == nodes - 1.
+        assert len(edges) == n_frags - 1, f"{smi}: motif graph is not a tree"
+    print("atom_fragments -> partitions atoms, motif graph is a tree")
 
     # Vocabulary: the floor is honoured and UNK is reserved at 0.
     corpus = ["CC(=O)Oc1ccccc1C(=O)O"] * 3 + ["c1ccccc1C(=O)O"]

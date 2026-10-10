@@ -241,6 +241,17 @@ simply cannot reorder them.
    rank of each dummy's anchor atom is the natural choice), and recompute the
    ranking each step. Canonical ranks shift as atoms are added, so a queue
    built once at the start drifts out of agreement with itself.
+1b. **The incoming fragment's slot is part of the action, not a tie-break.**
+   An earlier revision of this document said "lowest compatible dummy wins"
+   and marked it as a shortcut to be measured. It was measured and it is
+   lossy: reconstruction over BBBP was **63.5%** under that rule and **81.0%**
+   once the slot became part of the action. Do not reintroduce it.
+   (Stripping stereo at the corpus boundary took the remaining 81.0% to
+   **2039/2039 exact** -- all 387 residual failures were stereo-only. That is
+   free on the reward side: the featurizer has no chirality features, and
+   `C(m)` on a stereo and a stereo-stripped molecule is bit-identical,
+   verified.)
+
 2. Linearize the training molecules with **the identical rule**. Decompose a
    real molecule with `src.brics.decompose`, then replay the assembly choosing
    the queue head each step and taking the fragment that molecule actually has
@@ -261,7 +272,18 @@ simply cannot reorder them.
 
 The entire reason BRICS justifies this rebuild is that assembly is valid by
 construction, which buys validity, a compact action space and a
-synthesizability floor in one move. Generating an atom-level graph first and
+synthesizability floor in one move.
+
+**"Valid by construction" is narrower than it sounds — measured.** Type
+compatibility plus an explicit bond order makes every junction legal, so
+connectivity and valence are guaranteed. **Aromaticity is not**: joining two
+type-compatible aromatic fragments can produce a ring system RDKit cannot
+kekulize. Measured sanitization rates: untrained policy **95.4%**, MLE warm
+start **100%**, trained policy **100%**, and every inspected failure was a
+`KekulizeException`, never a valence error. So the floor is ~95% rather than
+100%, the warm start closes the gap, and unkekulizable molecules route through
+the invalidity hurdle like any other — the correct direction, and one more
+reason the warm start is not optional. Generating an atom-level graph first and
 decomposing it afterwards pays the full cost of the rebuild while keeping every
 problem it was meant to solve: invalid graphs still reachable, no fragment
 action space, and atom spam still available to the policy. It sounds like it

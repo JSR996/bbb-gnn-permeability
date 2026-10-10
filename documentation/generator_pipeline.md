@@ -170,21 +170,38 @@ single-sample figures on either side are not meaningful, see below).
 The classifiers only ever saw real molecules, so the population the generator
 drives toward is plausibly the population its reward is least reliable on.
 
-**What training changes is the variance, not the mean.** An earlier version of
-this section claimed agreement *drops* from the warm start to the trained policy
-(r 0.925 -> 0.859) and offered two mechanisms for it. The drop is not
-established: over 12 warm-start samples and 12 trained samples at n=64, the
-means are 0.916 +/- 0.021 and 0.872 +/- 0.091, a 0.67-sd difference holding in
-only 73% of pairings, with overlapping ranges. Both of the original figures were
-single draws from pools whose sd is 0.091, so there was nothing there to explain
-and the explanations have been removed.
+**The warm-start-to-trained comparison establishes nothing, in either the mean
+or the variance.** Two successive versions of this section claimed otherwise and
+both are retracted; the sequence is kept because the failure is instructive.
 
-What *is* established is the spread: sd 0.021 -> 0.091 is a variance ratio of
-18.8 against F(11,11) = 3.47 at 0.05 two-sided, p = 3e-05. **Training does not
-reliably make the reward less trustworthy on average; it makes its
-trustworthiness erratic from sample to sample.** For a diagnostic read off one
-group that is the more consequential property, because it means a single
-measurement of seed agreement during training is nearly uninformative.
+Over 12 warm-start samples and 12 trained samples at n=64, 45 seed-pairs:
+
+| | warm start | trained | verdict |
+|---|---|---|---|
+| mean r | 0.916 +/- 0.021 | 0.872 +/- 0.091 | 0.67 sd, 73% of pairings — **not established** |
+| variance | sd 0.021 | sd 0.091 | **not established** (below) |
+
+The variance claim looked strong and was not. The F-test gives F = 18.6,
+p = 3e-05, but **the whole effect is one sample**: dropping `rs0_ws0` step 200
+(r = 0.598) collapses it to F = 2.3, p = 0.19, while dropping any other point
+leaves F ~ 20.5. With every point retained, Levene's test median-centred gives
+**p = 0.19**. The F-test assumes normality and `r` is bounded on [-1, 1] and
+piled up near 0.9 — exactly the shape that inflates it. Step 200 is not a
+transient either: across the three runs its r is 0.598, 0.887 and 0.965, the
+full range.
+
+**Two method rules, both earned here:**
+
+1. **Use Levene (median-centred) for a variance comparison, never the F-test**,
+   on any statistic that is bounded or piled up. The F-test's p-value was wrong
+   by four orders of magnitude on this data.
+2. **Leave-one-out before quoting any variance ratio or any max.** Both are
+   one-point statistics. A ratio that moves from 18.6 to 2.3 on removing one of
+   twelve observations is describing that observation, not the populations.
+
+The irony is the point: the variance result was offered as the explanation for
+why single draws mislead, and was itself a single-draw artefact. The failure
+mode survived being named, by the people who had just named it.
 
 **This is directionally supported, NOT established, and must not be quoted with
 a confidence interval that excludes 1.** Getting here took three wrong turns

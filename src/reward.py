@@ -67,12 +67,20 @@ def load_frozen_classifier(
     """Return C(mols) -> np.ndarray of mean P(permeable), frozen and stationary.
 
     eval() is still load-bearing, for a smaller reason than it used to be. The
-    classifier now defaults to LayerNorm, which is batch-independent by
+    classifier now defaults to GraphNorm, which is batch-independent by
     construction, so C(m) no longer varies with group composition even in train
     mode. `nn.Dropout` does, so the forward pass is still stochastic without
     eval() and the "frozen C is stationary in k" premise of Section 3.1 would
     still be false. The batch-invariance assertion in _self_check stays: it is
     cheap, and it is what catches a regression back to BatchNorm.
+
+    THE ENSEMBLE IS VERIFIED HERE, NOT IN THE SELF-CHECK. The fold-identity
+    assertion used to live only in `_self_check`, hardcoded to
+    ("gin","gat","gine") at bbbp seed 0 -- so every other model set, seed or
+    results_dir was combined with nothing checked at all. It now runs on every
+    load, which is the only version of the guarantee worth having: two machines
+    pulling the same branch can otherwise assemble an ensemble out of a
+    half-updated checkout and nothing complains.
 
     Architecture is replayed from each run's metrics.json rather than taken
     from build_model's defaults. Those defaults were the de-facto contract --
@@ -85,11 +93,15 @@ def load_frozen_classifier(
     """
     root = results_dir or RESULTS_DIR
     nets = []
+    folds: dict[str, np.ndarray] = {}
+    norms: dict[str, str] = {}
     for name in models:
         ckpt = _checkpoint(root, dataset, name, seed)
         # Raises if the run was trained under a different featurizer, and
         # returns the architecture it was trained with.
         arch = run_contract(ckpt.parent)
+        norms[name] = arch.get("norm")
+        folds[name] = np.load(ckpt.parent / "test_preds.npz")["idx"]
         # Edge-aware operators carry a different skeleton class, so they must
         # be rebuilt by the module that trained them or the state_dict is
         # being loaded into the wrong architecture.
@@ -99,6 +111,35 @@ def load_frozen_classifier(
         net.eval()
         net.requires_grad_(False)
         nets.append(net)
+
+    # Same fold. The seed reseeds the scaffold split, so members trained under
+    # different split settings -- or pulled from a half-updated checkout --
+    # have each other's held-out molecules in their training sets, and the
+    # ensemble's predictions are leaked rather than merely worse.
+    first = models[0]
+    for name in models:
+        if not np.array_equal(folds[name], folds[first]):
+            # Mismatched folds are usually the SAME SIZE with different
+            # contents, so report the overlap -- a size comparison reads as
+            # "197 vs 197" and tells the reader nothing.
+            shared = len(np.intersect1d(folds[name], folds[first]))
+            raise RuntimeError(
+                f"ENSEMBLE LEAK: {name} and {first} (dataset={dataset}, "
+                f"seed={seed}) were trained on different folds -- "
+                f"{shared}/{len(folds[first])} test molecules in common. "
+                f"Members must share a split, or each has trained on the "
+                f"others' held-out molecules."
+            )
+
+    # Same normalization. Not a leak, but a mixed-norm ensemble is never
+    # intended -- it means a checkout caught mid-update, and the fold check
+    # above cannot see it because the split is unchanged.
+    if len(set(norms.values())) > 1:
+        raise RuntimeError(
+            f"mixed-norm ensemble: {norms}. These checkpoints come from "
+            f"different runs of the project; re-pull or retrain so every "
+            f"member shares a norm."
+        )
 
     @torch.no_grad()
     def classify(mols: list[Chem.Mol]) -> np.ndarray:

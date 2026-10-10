@@ -84,9 +84,19 @@ def bond_features(bond: Chem.rdchem.Bond) -> list[float]:
 
 
 def smiles_to_graph(smiles: str, label: float | None = None) -> Data | None:
-    """Return a PyG `Data`, or None if RDKit cannot parse the SMILES."""
+    """Return a PyG `Data`, or None if RDKit cannot parse the SMILES.
+
+    A molecule carrying a dummy atom is rejected. `[3*]C(C)=O` parses and
+    sanitizes fine, and the atom one-hot has a trailing catch-all bucket, so a
+    BRICS fragment with an open attachment point would otherwise featurize to a
+    perfectly ordinary-looking graph and be scored as if it were a molecule.
+    The fragment-assembly generator must only ever submit capped, terminal
+    molecules; this makes a leak impossible rather than merely discouraged.
+    """
     mol = Chem.MolFromSmiles(smiles)
     if mol is None or mol.GetNumAtoms() == 0:
+        return None
+    if any(a.GetAtomicNum() == 0 for a in mol.GetAtoms()):
         return None
 
     x = torch.tensor([atom_features(a) for a in mol.GetAtoms()], dtype=torch.float)

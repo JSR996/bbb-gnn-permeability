@@ -119,9 +119,20 @@ def sanitizable(smiles: str) -> Chem.Mol | None:
     generator's syntactic guarantee says nothing about whether the result
     survives sanitization. These are different failure modes; only this one
     gates the reward.
+
+    A dummy atom also fails here. `[3*]C(C)=O` sanitizes perfectly well, so a
+    BRICS fragment with an unfilled attachment point would otherwise be counted
+    valid and scored -- an open valence is not a molecule, and the classifier
+    has never seen one. This is the same guard as in `featurize.smiles_to_graph`
+    and it is deliberately in both: this one decides `valid`, that one decides
+    what reaches the network.
     """
     mol = Chem.MolFromSmiles(smiles)  # returns None iff sanitization fails
-    return None if mol is None or mol.GetNumAtoms() == 0 else mol
+    if mol is None or mol.GetNumAtoms() == 0:
+        return None
+    if any(a.GetAtomicNum() == 0 for a in mol.GetAtoms()):
+        return None
+    return mol
 
 
 def score_terms(smiles: list[str], classify, tox=None,

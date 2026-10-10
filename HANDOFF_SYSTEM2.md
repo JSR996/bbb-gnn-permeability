@@ -247,6 +247,17 @@ simply cannot reorder them.
    there. If the rule used to linearize differs from the rule used at sampling
    time by even a tie-break, the warm start teaches a policy that the sampler
    cannot follow — and it fails as mediocre validity, not as an error.
+3. **The root fragment needs a canonical rule too, and it is easy to miss.**
+   Site ordering alone does not make a trace unique: a molecule with *k*
+   fragments has *k* candidate roots. Measured on BBBP, **336 of 397 molecules
+   have more than one fragment** (mean 4.1, max 19), so without a root rule
+   most of the corpus has several valid traces and the MLE target is ambiguous
+   again — the same problem as site choice, through a different door.
+   Canonicalize the molecule *before* `decompose` and take `frags[0]`: after
+   canonicalization, atom order is canonical and `GetMolFrags` orders by first
+   atom index, so `frags[0]` is the fragment holding canonical atom 0. That is
+   deterministic — but it depends entirely on the canonicalization happening
+   first, so assert it rather than leaving it implicit.
 
 The entire reason BRICS justifies this rebuild is that assembly is valid by
 construction, which buys validity, a compact action space and a

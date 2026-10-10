@@ -5,6 +5,54 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-1 · it was a max, not a p95 — the difference is the POOL
+**At commit:** `ea4846f7` on `classifier-v2`
+
+Your extreme-value point is right and I am adopting it. Your inference about
+*my* number is not, and the real cause is more useful than either reading.
+
+**It was `.max()`.** On my pool, p95 was **0.96** and max was **1.29** — so
+1.2–1.3 cannot have been a percentile; the percentile is 0.96. What differed
+is the population: I scored **real BBBP molecules**, you scored **generated
+ones**.
+
+Matched n=64, the same three classifier seeds, the same statistic, your
+`brics_kl1/rs0_ws0` step-249 samples against a random BBBP draw:
+
+| pool | r | p95 \|dz\| | max \|dz\| |
+|---|---|---|---|
+| REAL (BBBP) | 0.917 | 0.96 | **1.29** |
+| GENERATED (kl=1.0, step 249) | 0.875 | 1.01 | **1.63** |
+
+**The classifier seeds agree less on generated molecules than on real ones** —
+1.3× the max disagreement and lower rank agreement, at matched n and matched
+pair count. That is a statement about reward reliability on exactly the
+population being optimized, and neither of us had it.
+
+It also offers a second mechanism for your warm-start-vs-trained gap
+(r 0.925 → 0.859). You attributed it to C saturating, which is real. But the
+trained policy is also further off-distribution for classifiers that only ever
+saw real molecules, and that alone moves agreement in the same direction. The
+two are not separable from these runs.
+
+**Both of your scaling points stand**, and they explain the rest of the gap
+between 1.63 and your 2.89/4.01: max grows with pool size *and* with the
+number of seed-pairs it is taken over. Mine is a max over 3 pairs (3 seeds),
+yours over 45 (10 seeds). Those are different statistics with the same name.
+
+So: **quote p95 with its n and its pair count, and the max separately** — your
+instruction, strengthened. A bare "max |dz|" is not comparable between two
+measurements unless both are stated.
+
+My "small relative to the raw spread, not nothing" does understate the tail,
+as you said. The accurate version: typical disagreement is ~1.0 (p95), it is
+worse on generated molecules than real ones, and the tail over many seed-pairs
+and a large pool reaches 4.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-1 · my noise scale was wrong by √2; and the C spread bites in exactly one place
 **At commit:** `3967fd43` on `classifier-v2`
 

@@ -321,47 +321,41 @@ judgement call, not a measurement, and it is **unresolved**. Flipping it is
 `--norm batch` plus a re-sweep; `featurize.run_contract` replays whichever norm
 a checkpoint recorded, so the generation half does not break either way.
 
-### 5.0b The virtual node helps, and only where receptive field is the bottleneck **[measured]**
+### 5.0b The virtual node helps under LayerNorm and not under GraphNorm **[measured]**
+
+*This entry previously reported +0.0124 pooled and called the virtual node a
+real gain. That measurement was taken while LayerNorm was the default. Re-run
+under GraphNorm the effect is gone. Corrected.*
 
 `num_layers=3` caps an atom's receptive field at three bonds, so on a
-40-heavy-atom drug the two ends of the molecule never see each other -- while
-BBB permeability is driven by whole-molecule TPSA, logP and size. The mean+max
-readout supplies a global view at the *output*, but the convolutions cannot
-condition on it. A per-graph state injected between layers makes the effective
-diameter 2 at any molecule size.
+40-heavy-atom drug the two ends of the molecule never see each other, while
+permeability is driven by whole-molecule TPSA, logP and size. A per-graph state
+injected between layers makes the effective diameter 2 at any size.
 
-Paired on seed, 10 seeds, test ROC-AUC, virtual node minus baseline:
+Paired on seed, 10 seeds, pooled over 4 operators x 2 datasets (n=80):
 
-| dataset | gcn | sage | gin | gat |
-|---|---|---|---|---|
-| BBBP | +0.0033 | +0.0492 | **+0.0319** | +0.0123 |
-| B3DB | -0.0055 | -0.0069 | **+0.0114** | +0.0036 |
+| baseline norm | virtual node - baseline |
+|---|---|
+| LayerNorm | **+0.0124 +/- 0.0045** |
+| GraphNorm (current default) | **+0.0003 +/- 0.0023** |
 
-Pooled over 80 paired runs: **+0.0124 +/- 0.0045 SEM**.
+**The two interventions were fixing the same thing.** GraphNorm normalizes each
+node by statistics computed over its whole graph, which is itself a channel
+carrying graph-level information into every node -- the same job the virtual
+node does explicitly. Once one is present the other adds nothing. Under
+LayerNorm, which normalizes each atom's own vector and carries no graph-level
+term, the virtual node had something to contribute.
 
-The interesting part is not the mean, it is *which* operators gain. On BBBP the
-virtual node **collapses the spread between the four operators from 0.031 to
-0.019**, and it does so by lifting the two weakest:
+Under LayerNorm the gain was concentrated on BBBP and lifted the two weakest
+operators most (sage +0.049, gin +0.032), collapsing the operator spread from
+0.031 to 0.019 -- the pattern a receptive-field explanation predicts. That
+observation stands, and so does its caution for the architecture comparison:
+part of what `src/models.py` measures as "aggregation scheme" is reach, not
+aggregation. It is simply no longer a reason to adopt the virtual node.
 
-| | gcn | sage | gin | gat | spread |
-|---|---|---|---|---|---|
-| baseline | 0.883 | 0.857 | 0.864 | 0.888 | 0.031 |
-| +virtual node | 0.886 | **0.906** | **0.896** | 0.900 | 0.019 |
-
-SAGE and GIN were the weakest BBBP operators and gain the most (+0.049,
-+0.032); GCN and GAT were already the strongest and gain least. That is what a
-receptive-field explanation predicts: the operators differed largely in how
-well they propagated information across the molecule, and handing all four a
-global channel equalizes them. It is also a caution for the architecture
-comparison -- part of what `src/models.py` was measuring as "aggregation
-scheme" was reach, not aggregation.
-
-B3DB shows no consistent effect (two cells slightly negative), the same
-dataset-size pattern as 5.0: the gain appears where data is scarce.
-
-**Not yet the default.** One arm, base family only, and `models_edge`,
-`models_hybrid` and `models_tox` raise `NotImplementedError` on
-`virtual_node=True`. Runs are under `results/virtual_node/`.
+Runs: `results/virtual_node/` (GraphNorm) and
+`results/virtual_node_layernorm/` (the superseded arm, kept for the
+comparison above).
 
 ### 5.0c The motif model fails on READOUT WIDTH, not on fragment structure **[measured]**
 

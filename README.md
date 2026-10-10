@@ -427,8 +427,10 @@ duplicate copies disagree on the label are dropped entirely rather than guessed.
   default; BatchNorm scores ~0.015 higher on BBBP but makes a frozen
   classifier's output depend on batch composition. See
   `documentation/limitations.md` 5.0.
-- **The virtual node is measured but not default** (+0.012 pooled, concentrated
-  on BBBP) and only the base family supports it. 5.0b.
+- **The virtual node adds nothing under the current default.** +0.0124 under
+  LayerNorm, +0.0003 +/- 0.0023 under GraphNorm -- the two were fixing the same
+  thing, since GraphNorm already carries graph-level statistics into every
+  node. 5.0b.
 - **Tiny external holdouts** (n = 55–59). Adenot is saturated and uninformative;
   Wang results swing on single-digit error counts.
 - **Hybrid model uses descriptors**, including a CNS-MPO *proxy* (5 of 6 terms;

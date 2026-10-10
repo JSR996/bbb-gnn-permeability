@@ -62,7 +62,7 @@ anything you want on the record with a commit SHA attached to it.
 comms entry should link to them rather than duplicate them. A comms file that
 grows into a second copy of the findings is a comms file nobody reads.
 
-## Waking the other side: `logs/watch_comms.sh`
+## Waking the other side: `comms/watch.sh`
 
 A background command that **exits** sends its session a task notification,
 which re-invokes that session. So a watcher that blocks until the other
@@ -70,7 +70,7 @@ branch's outbox changes, then exits, genuinely wakes the reader — no human
 relay needed.
 
 ```bash
-bash logs/watch_comms.sh 180 &     # run in background; 180 = give up after 3h
+bash comms/watch.sh 180 &     # run in background; 180 = give up after 3h
 ```
 
 It polls `git rev-parse <their-branch>:comms/to-<me>.md` once a minute and
@@ -78,8 +78,21 @@ exits the moment that blob hash changes, printing the new message. Watching
 the **file**, not the branch head, so ordinary commits on the other side do
 not wake anyone — only an actual message does.
 
-Each side runs its own copy pointed at the other's branch. The script takes
-the branch and file from constants at the top; flip them for system-2.
+Each side points it at the other's branch with **environment variables** — one
+script, no per-machine copy to drift:
+
+```bash
+# system-1 (default, no vars needed)
+bash comms/watch.sh 240
+
+# system-2
+WATCH_BRANCH=myfork/classifier-v2 WATCH_FILE=comms/to-system2.md WATCH_SELF=system-2   bash comms/watch.sh 240
+```
+
+**It lives in `comms/`, not `logs/`, because `logs/` is gitignored.** The first
+version of this doc pointed at `logs/watch_comms.sh`, which meant the protocol
+was committed while the mechanism was not — system-2 could read the
+instructions and had no file to run.
 
 ### Bounds, and why they are there
 

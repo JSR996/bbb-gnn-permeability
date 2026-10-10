@@ -312,6 +312,48 @@ judgement call, not a measurement, and it is **unresolved**. Flipping it is
 `--norm batch` plus a re-sweep; `featurize.run_contract` replays whichever norm
 a checkpoint recorded, so the generation half does not break either way.
 
+### 5.0b The virtual node helps, and only where receptive field is the bottleneck **[measured]**
+
+`num_layers=3` caps an atom's receptive field at three bonds, so on a
+40-heavy-atom drug the two ends of the molecule never see each other -- while
+BBB permeability is driven by whole-molecule TPSA, logP and size. The mean+max
+readout supplies a global view at the *output*, but the convolutions cannot
+condition on it. A per-graph state injected between layers makes the effective
+diameter 2 at any molecule size.
+
+Paired on seed, 10 seeds, test ROC-AUC, virtual node minus baseline:
+
+| dataset | gcn | sage | gin | gat |
+|---|---|---|---|---|
+| BBBP | +0.0033 | +0.0492 | **+0.0319** | +0.0123 |
+| B3DB | -0.0055 | -0.0069 | **+0.0114** | +0.0036 |
+
+Pooled over 80 paired runs: **+0.0124 +/- 0.0045 SEM**.
+
+The interesting part is not the mean, it is *which* operators gain. On BBBP the
+virtual node **collapses the spread between the four operators from 0.031 to
+0.019**, and it does so by lifting the two weakest:
+
+| | gcn | sage | gin | gat | spread |
+|---|---|---|---|---|---|
+| baseline | 0.883 | 0.857 | 0.864 | 0.888 | 0.031 |
+| +virtual node | 0.886 | **0.906** | **0.896** | 0.900 | 0.019 |
+
+SAGE and GIN were the weakest BBBP operators and gain the most (+0.049,
++0.032); GCN and GAT were already the strongest and gain least. That is what a
+receptive-field explanation predicts: the operators differed largely in how
+well they propagated information across the molecule, and handing all four a
+global channel equalizes them. It is also a caution for the architecture
+comparison -- part of what `src/models.py` was measuring as "aggregation
+scheme" was reach, not aggregation.
+
+B3DB shows no consistent effect (two cells slightly negative), the same
+dataset-size pattern as 5.0: the gain appears where data is scarce.
+
+**Not yet the default.** One arm, base family only, and `models_edge`,
+`models_hybrid` and `models_tox` raise `NotImplementedError` on
+`virtual_node=True`. Runs are under `results/virtual_node/`.
+
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked
 by the proxy (403), so torch has to come from PyPI. There is no

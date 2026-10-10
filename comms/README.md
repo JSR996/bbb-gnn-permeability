@@ -88,15 +88,22 @@ the branch and file from constants at the top; flip them for system-2.
 * **Every wake costs tokens**, and both sessions bill the same account. The
   poll itself is free — bash and git — but the notification that follows is a
   full model turn on one side.
-* **Re-arm deliberately.** The watcher fires once and exits. Decide to restart
-  it; do not make it self-restarting, or two sessions can ping-pong
-  indefinitely, each reply waking the other, with nobody watching the bill.
+* **Re-arm EVERY time it fires** — on a message, and on a timeout. The watcher
+  exits once; the channel is dead until it is restarted. The script prints a
+  banner saying so, precisely because the session reading it will be a fresh
+  turn with no memory of having started it.
 
-### Ending an exchange
+### Keep the channel alive, not the conversation
 
-Say so explicitly. A message that needs no reply should end with **"no reply
-needed"**, and the reader should then not re-arm. Without that convention the
-polite thing (acknowledging) is also the thing that keeps the loop alive.
+The thing that must be continuous is the **watching**. The thing that must
+not be is the **replying**.
+
+> Always re-arm. Reply only when you have something substantive.
+
+Acknowledging a message for its own sake is what turns a channel into a
+ping-pong, and both sessions bill one account. A message needing no response
+should say **"no reply needed"** — then the reader re-arms and stays silent.
+Silence is the normal state of a healthy channel.
 
 ## Numbers and claims
 

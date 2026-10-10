@@ -133,10 +133,39 @@ within-group sd fell to 0.006 with everything above 0.95, below the model's own
 MC-dropout uncertainty. Among these survivors the sd is **0.175**, so the
 ordering carries signal.
 
-**The ranking is one fold's opinion.** `C` comes from the reward seed, and
-`C(aspirin)` spans 0.43-0.79 across the ten available seeds. This set was
-screened and ranked at **reward seed 0**. That is recorded here because
-"ranked survivors" otherwise reads as fold-independent, which it is not.
+**The ranking is one fold's opinion, and this is where reward seed actually
+bites.** `C(aspirin)` spans **0.2408 (seed 8) to 0.7917 (seed 5)** across the ten
+available seeds — verified on all ten, not sampled. This set was screened and
+ranked at **reward seed 0**, which is recorded because "ranked survivors"
+otherwise reads as fold-independent.
+
+The scope of that concern is narrower than the raw spread suggests, and the
+distinction decides where it matters:
+
+| | measured |
+|---|---|
+| mean `C` per seed, one group of 64 | 0.690 - 0.796 |
+| rank agreement across seeds (Spearman) | rho = 0.82 - 0.89, 45 pairs |
+| after within-group z-scoring | r = 0.86 - 0.93 |
+| per-molecule \|z difference\|, 95th pct | 1.2 |
+| per-molecule \|z difference\|, max | 2.9 (n=64) to 4.0 (n=200) |
+
+**`group_advantages` standardizes within the group, so the absolute level is
+divided out before it reaches the policy.** The seeds largely agree on *ranking*,
+and post-standardization — which is what GRPO actually sees — they agree at
+r ~ 0.9. Training is therefore considerably more robust to reward seed than the
+0.24-0.79 spread implies, and the rs0/rs1 agreement in the 2x2 is expected
+rather than lucky.
+
+`postfilter` is the opposite case: it ranks by **absolute** `C` across a pool
+with no standardization, so seed choice moves the ordering directly. That is why
+the seed is recorded with the candidate set rather than merely noted.
+
+Not zero for training either: the max \|z difference\| on an individual molecule
+is 2.9 at group size 64, so a single molecule's advantage can differ by nearly
+three standard deviations between seeds. The 95th percentile is 1.2, so that is
+a tail rather than the typical case — but it is an extreme-value statistic that
+grows with pool size (4.0 at n=200), so quote the percentile and the n with it.
 
 **The training-overlap check is constitution-level, and was not originally.**
 `postfilter`'s exact-SMILES test is stereo-sensitive, and this generator emits

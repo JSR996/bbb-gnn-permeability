@@ -147,8 +147,9 @@ distinction decides where it matters:
 | mean `C` per seed, one group of 64 | 0.690 - 0.796 |
 | rank agreement across seeds (Spearman) | rho = 0.82 - 0.89, 45 pairs |
 | after within-group z-scoring | r = 0.86 - 0.93 |
-| per-molecule \|z difference\|, 95th pct, generated | 1.21 |
-| per-molecule \|z difference\|, 95th pct, real BBBP | 0.79 |
+| per-molecule \|z difference\| p95, generated | 1.21 |
+| per-molecule \|z difference\| p95, real BBBP | 0.89 +/- 0.12 (30 draws) |
+| ratio, generated / real | 1.39x (1.03 - 1.89), 30/30 draws |
 
 **`group_advantages` standardizes within the group, so the absolute level is
 divided out before it reaches the policy.** The seeds largely agree on *ranking*,
@@ -162,14 +163,29 @@ with no standardization, so seed choice moves the ordering directly. That is why
 the seed is recorded with the candidate set rather than merely noted.
 
 Not zero for training either, and it is **worse on the molecules being
-optimized than on real ones**. At matched n=64 and matched pair count, the ten
-seeds agree at r = 0.931 on a random BBBP draw against r = 0.859 on generated
-molecules, with the 95th-percentile per-molecule disagreement 0.79 against 1.21.
-The classifiers only ever saw real molecules, so the population the generator
-drives toward is the population its reward is least reliable on. That also gives
-a second mechanism for the warm-start-to-trained agreement drop (r 0.925 ->
-0.859) besides `C` saturating: a trained policy is further off-distribution for
-the judge. The two are not separable from these runs.
+optimized than on real ones**. At matched n=64 over all 45 seed-pairs, the ten
+seeds agree at r = 0.931 on real BBBP molecules against r = 0.859 on generated
+ones. The classifiers only ever saw real molecules, so the population the
+generator drives toward is the population its reward is least reliable on. That
+also gives a second mechanism for the warm-start-to-trained agreement drop
+(r 0.925 -> 0.859) besides `C` saturating: a trained policy is further
+off-distribution for the judge. The two are not separable from these runs.
+
+**Quote the ratio from 45 seed-pairs, not 3, and give its range.** The real-pool
+baseline is the noisy half, not the generated half, so the ratio inherits the
+control's instability. Bootstrapped over 30 random BBBP draws at n=64, against
+one fixed generated sample:
+
+| seed-pairs | real p95 | ratio gen/real | draws where gen > real |
+|---|---|---|---|
+| 3 | 0.91 +/- 0.20 | 1.26x (0.75 - 1.64) | 26/30 |
+| **45** | 0.89 +/- 0.12 | **1.39x (1.03 - 1.89)** | **30/30** |
+
+At 3 pairs the direction fails in 4 of 30 draws, which is why two independent
+3-pair measurements of this gap landed at 1.05x and 1.52x — both inside that
+range. At 45 pairs the control tightens and the direction is unanimous. The
+instability was an artefact of too few seed-pairs rather than a property of the
+effect, so the effect size is quotable at 45 pairs and is not at 3.
 
 **Quote the 95th percentile with its n and its pair count; do not compare pools
 on the max.** `max |z difference|` is an extreme-value statistic that grows with

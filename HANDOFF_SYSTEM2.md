@@ -190,8 +190,42 @@ Record whichever you used.
 
 ### 4.1 Assembly-first. Do not generate a graph and then decompose it.
 
-The action space **is** sequential assembly: pick an attachment point, pick a
-compatible fragment, let RDKit form the bond. The molecule is the *output*.
+The action space **is** sequential assembly: the open attachment sites are held
+in a deterministic queue, and at each step the policy chooses only **what to
+put on the current site** — a fragment from the vocabulary, or CAP to close it
+— until no open site remains. The molecule is the *output*.
+
+**The policy does not choose the site.** An earlier draft of this document said
+the action was "(attachment point, fragment)", which read as a joint choice
+over both. It is not, and the difference matters:
+
+- The MLE warm start is **not optional** in this project (§5.4) and needs one
+  target per state. If the policy picks the site, a molecule with *k* open
+  sites has up to *k!* valid trajectories, so you need a canonical ordering to
+  choose a teacher-forcing target anyway — the ordering problem comes straight
+  back, having also cost you a larger action space.
+- GRPO standardizes rewards **within a group**. If one molecule is reachable by
+  many trajectories it can appear twice in a group with different log-probs,
+  and `group_advantages` is then standardizing over something that is not a
+  clean sample of distinct candidates.
+- Action space is `|vocab| + 2` instead of `|open sites| x |compatible
+  fragments|`, which matters at 1572 BBBP training molecules.
+
+CAP keeps most of the expressiveness: the policy can decline to grow a site, it
+simply cannot reorder them.
+
+**Two implementation notes, both places where this goes quietly wrong:**
+
+1. Rank open sites by a property of the *partial* molecule (RDKit canonical
+   rank of each dummy's anchor atom is the natural choice), and recompute the
+   ranking each step. Canonical ranks shift as atoms are added, so a queue
+   built once at the start drifts out of agreement with itself.
+2. Linearize the training molecules with **the identical rule**. Decompose a
+   real molecule with `src.brics.decompose`, then replay the assembly choosing
+   the queue head each step and taking the fragment that molecule actually has
+   there. If the rule used to linearize differs from the rule used at sampling
+   time by even a tie-break, the warm start teaches a policy that the sampler
+   cannot follow — and it fails as mediocre validity, not as an error.
 
 The entire reason BRICS justifies this rebuild is that assembly is valid by
 construction, which buys validity, a compact action space and a
@@ -256,10 +290,11 @@ moment someone reloads a checkpoint, which may be hours after the edit.
 Suggested build order, none of which depends on the classifier:
 
 1. BRICS assembly engine — attachment bookkeeping, fragment compatibility by
-   BRICS type, bond formation, **canonical trajectory ordering** (populate
-   attachment sites in a fixed index order so one molecule has one trajectory,
-   not *k!*), `[STOP]`, terminal capping.
-2. Hierarchical policy: core selection → (attachment point, fragment).
+   BRICS type, bond formation, the **deterministic site queue** of §4.1 (so one
+   molecule has one trajectory, not *k!*), CAP, terminal capping.
+2. Hierarchical policy: core selection, then one categorical over
+   `vocab + {CAP}` per dequeued site. The policy does **not** select the site
+   — see §4.1.
 3. **Terminal-only reward.** Never score a molecule with open `[*]` tags; the
    classifier's prediction on a partial graph is meaningless.
 4. MLE warm start on assembly traces decomposed from real molecules. The warm

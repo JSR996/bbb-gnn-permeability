@@ -126,6 +126,14 @@ def discover_checkpoints() -> list[dict]:
                     found.append(dict(family="hybrid", dataset=dataset,
                                        model=model_name, seed_dir=seed_dir))
 
+    # hybrid_batch: the hybrid family under BatchNorm, same layout as hybrid
+    for dataset in ("bbbp", "b3db"):
+        for model_name in MODELS:
+            for seed_dir in sorted((RESULTS_DIR / "hybrid_batch" / dataset / model_name).glob("seed*")):
+                if (seed_dir / "model.pt").exists():
+                    found.append(dict(family="hybrid_batch", dataset=dataset,
+                                      model=model_name, seed_dir=seed_dir))
+
     # edge_ablation: results/edge_ablation/<dataset>/<model>/seed<N>/model.pt
     for dataset in ("bbbp", "b3db"):
         for model_name in EDGE_MODELS:
@@ -145,7 +153,7 @@ def build_model_for(family: str, model_name: str, **arch) -> torch.nn.Module:
     """
     if family == "base":
         return build_model(model_name, **arch)
-    if family == "hybrid":
+    if family in ("hybrid", "hybrid_batch"):
         return build_hybrid_model(model_name, **arch)
     if family == "edge_ablation":
         return build_edge_model(model_name, **arch)
@@ -225,7 +233,7 @@ def main() -> None:
         threshold = load_val_threshold(seed_dir)
 
         mu = sigma = None
-        if family == "hybrid":
+        if family.startswith("hybrid"):
             scaling = np.load(seed_dir / "descriptor_scaling.npz")
             mu, sigma = scaling["mu"], scaling["sigma"]
 

@@ -447,6 +447,37 @@ delta against zero, not the best arm against a marginal band.
 Runs: `results/hrm/`. B3DB was not run: a -0.038 pooled effect with every cell
 significant does not need a second dataset to confirm the sign.
 
+### 5.0e Descriptors and BatchNorm stack; that settles the norm question **[measured]**
+
+5.0 left the norm unresolved because BatchNorm scored higher while breaking
+reward stationarity. The missing measurement was the hybrid family under
+BatchNorm -- the two positive effects had never been run together.
+
+Pooled over 4 operators x 2 datasets x 10 seeds, paired:
+
+| | Δ vs base |
+|---|---|
+| descriptors alone | +0.0099 +/- 0.0019 |
+| BatchNorm alone | +0.0074 +/- 0.0023 |
+| predicted if independent | +0.0173 |
+| **measured together** | **+0.0195 +/- 0.0024** |
+
+Additive, marginally super-additive. Best BBBP **0.9214** (gcn), B3DB 0.9048.
+
+**And unlike the descriptor effect, the BatchNorm gain survives out of
+distribution**: +0.0101 in-distribution against **+0.0108 on Wang**, same
+direction and magnitude. It moves the hybrid family from last of four to
+second on Wang (0.8386 -> 0.8495), statistically tied with the edge family's
+0.8525. That is what makes a BatchNorm pipeline defensible rather than an
+in-distribution artifact.
+
+**The question is therefore not "which norm is better" but "what is the
+checkpoint for".** Standalone classifier: BatchNorm, +0.010 and it generalizes.
+Frozen as a GRPO reward: GraphNorm, because batch-dependence makes C(m) a
+function of the group rather than of the molecule. Both are recorded in
+`documentation/pipeline.md`; `featurize.run_contract` replays whichever norm a
+checkpoint recorded, so the two coexist without ambiguity.
+
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked
 by the proxy (403), so torch has to come from PyPI. There is no

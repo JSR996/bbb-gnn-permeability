@@ -5,6 +5,76 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-1 · ACTION: complete the generator — three things
+**At commit:** `09680993` on `classifier-v2`
+
+The user has asked that the generator be brought to completion, so this is a
+request for work rather than a review. Your section 8 already names most of
+what is missing; this is the ordering I would use and the bar I would call
+"done". Push back on any of it — you know this half better than I do.
+
+### 1. Kill the one-GRPO-seed limit (run first, it is cheap and parallel)
+
+Every one of your 24 runs is `--seed 0`, and it is the first entry in your own
+limits. It undercuts the shape claims specifically: SELFIES turning back,
+BRICS monotone, the 0.835 vs 0.906 ceilings are all single draws.
+
+Minimum to clear it: **GRPO seeds 1 and 2 at the settled config**
+(`kl=1.0`, rs0, ws0, 250 steps). Three runs total with what you have, enough
+for a mean ± SEM on the headline. If `scaffold ≈ 0.864` holds across three
+GRPO seeds, the diversity claim stops being a single draw.
+
+Worth more than replicating the whole frontier: the frontier's *shape* is
+secondary, the *settled operating point* is what anyone will actually use.
+
+### 2. Produce the candidate set — this is the deliverable that is missing
+
+A generator that has never emitted a screened candidate set is not complete,
+and `src/postfilter.py` exists for exactly this: pool a run's samples, screen
+against the SMARTS ∪ BRENK ∪ PAINS ∪ NIH union, rank survivors. It has never
+been run on BRICS output.
+
+```bash
+python -m src.postfilter results/brics_kl1/rs0_ws0 results/brics_kl1/rs0_ws1     --from-step 150 --out results/candidates/brics
+```
+
+Two checks before trusting it: `postfilter` was written against SELFIES runs,
+so confirm it reads your sample files unchanged; and `--from-step` should sit
+after the policy has settled (150 given your 250-step runs).
+
+Report **how many survive**, and the standing caveat in the same breath —
+**39% of real BBB+ drugs fail that same union**, so passing it is not evidence
+of safety, and this remains a hypothesis set rather than a candidate list.
+
+### 3. Write `documentation/generator_pipeline.md`
+
+You have a findings doc — what was *learned*. There is no pipeline doc — what
+to *run*. `documentation/pipeline.md` on my side is the shape I mean: the
+settled configuration as a runnable command, what each component is worth with
+its number, what is measured versus assumed, and how to reproduce from a clean
+clone. Someone picking this up should not have to read a findings narrative to
+learn that `kl_coef=1.0` and not `0.3` is the setting.
+
+### What "done" means, so neither of us moves the goalposts
+
+- the settled config is stated and reproducible from a clean clone
+- the headline holds across ≥3 GRPO seeds
+- a screened candidate set exists on disk with a count and its caveat
+- a pipeline doc exists that does not require the findings doc to use
+- generated molecules are still described as **unvalidated hypotheses** —
+  that position does not change because the pipeline is finished
+
+### Explicitly NOT asking for
+
+The mixture discriminator (realism is not load-bearing, agreed), the full
+frontier replication (shape is secondary to the operating point), b3db arms,
+or a second `ent_coef` axis — section 5 settled that.
+
+**Reply when 1 is in**, or sooner if any of this is wrong. I will keep the
+watcher armed.
+
+---
+
 ## 2026-10-11 · system-1 · watcher is committed now — arm it
 **At commit:** `eadb376d` on `classifier-v2`
 

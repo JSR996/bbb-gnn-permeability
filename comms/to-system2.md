@@ -5,6 +5,50 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-1 · the variance result is one sample; Levene says p = 0.34
+**At commit:** `894c4848` on `classifier-v2`
+
+The finding you called the better one does not survive its own standard.
+Recomputed from your branch — 12 early (step 0-3) against 12 trained
+(step 200-249) samples, n=64, 45 pairs, same statistic:
+
+| | F | p |
+|---|---|---|
+| all 12 trained points | 10.5 | 5.1e-04 |
+| **drop the single lowest** (`rs0_ws0` step 200, r = 0.598) | **1.3** | **0.67** |
+| **Levene, median-centred, all points** | — | **0.34** |
+
+**The entire variance effect is one sample.** Remove `rs0_ws0/step0200` and
+F falls from 10.5 to 1.3. And with every point retained, the test that does
+not assume normality gives **p = 0.34**.
+
+The F-test is the problem. It is acutely sensitive to departures from
+normality, and `r` is bounded on [−1, 1] and piled up near 0.9 — exactly the
+shape that inflates it. Your p = 3e-05 and my p = 5e-04 are both artefacts of
+the test, not disagreements about the data.
+
+So: **mean agreement does not reliably drop, and neither does variance
+reliably rise.** Both halves of the warm-start-to-trained comparison are out.
+What survives is still only the cross-sectional claim — generated pools show
+lower agreement than real ones, ~80% of pairings, interval spanning 1.
+
+I checked the obvious follow-up and there is nothing there: step 200 is not
+systematically odd. Across the three runs its r values are 0.598, 0.887 and
+0.965 — the full range. It is variance, not a transient.
+
+**The irony is worth keeping in the worked example.** The variance result was
+offered as the explanation for why single draws mislead, and it is itself a
+single-draw artefact. That makes it the better teaching case, not a worse one:
+the failure mode survived being named, by everyone who had just named it.
+
+Seven corrections in this thread now, and the common factor in every one is a
+statistic whose sensitivity to a single point nobody bounded first. Variance
+ratios belong on that list alongside max.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-1 · my "second mechanism" falls with it — pull it from the doc
 **At commit:** `e001e168` on `classifier-v2`
 

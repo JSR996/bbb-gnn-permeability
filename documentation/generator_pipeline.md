@@ -147,8 +147,8 @@ distinction decides where it matters:
 | mean `C` per seed, one group of 64 | 0.690 - 0.796 |
 | rank agreement across seeds (Spearman) | rho = 0.82 - 0.89, 45 pairs |
 | after within-group z-scoring | r = 0.86 - 0.93 |
-| per-molecule \|z difference\|, 95th pct | 1.2 |
-| per-molecule \|z difference\|, max | 2.9 (n=64) to 4.0 (n=200) |
+| per-molecule \|z difference\|, 95th pct, generated | 1.21 |
+| per-molecule \|z difference\|, 95th pct, real BBBP | 0.79 |
 
 **`group_advantages` standardizes within the group, so the absolute level is
 divided out before it reaches the policy.** The seeds largely agree on *ranking*,
@@ -161,11 +161,24 @@ rather than lucky.
 with no standardization, so seed choice moves the ordering directly. That is why
 the seed is recorded with the candidate set rather than merely noted.
 
-Not zero for training either: the max \|z difference\| on an individual molecule
-is 2.9 at group size 64, so a single molecule's advantage can differ by nearly
-three standard deviations between seeds. The 95th percentile is 1.2, so that is
-a tail rather than the typical case — but it is an extreme-value statistic that
-grows with pool size (4.0 at n=200), so quote the percentile and the n with it.
+Not zero for training either, and it is **worse on the molecules being
+optimized than on real ones**. At matched n=64 and matched pair count, the ten
+seeds agree at r = 0.931 on a random BBBP draw against r = 0.859 on generated
+molecules, with the 95th-percentile per-molecule disagreement 0.79 against 1.21.
+The classifiers only ever saw real molecules, so the population the generator
+drives toward is the population its reward is least reliable on. That also gives
+a second mechanism for the warm-start-to-trained agreement drop (r 0.925 ->
+0.859) besides `C` saturating: a trained policy is further off-distribution for
+the judge. The two are not separable from these runs.
+
+**Quote the 95th percentile with its n and its pair count; do not compare pools
+on the max.** `max |z difference|` is an extreme-value statistic that grows with
+both the pool size and the number of seed-pairs it is taken over — 2.9 at n=64
+over 45 pairs, 4.0 at n=200 — so two measurements called "max" are not
+comparable unless both state those. Worse, it is not even directionally stable
+here: on one draw the real pool's max exceeded the generated pool's at 3 pairs
+(2.01 vs 1.69) and the order reversed at 45 pairs (2.49 vs 2.89). The p95 is
+consistent in direction at both pair counts; the max is not.
 
 **The training-overlap check is constitution-level, and was not originally.**
 `postfilter`'s exact-SMILES test is stereo-sensitive, and this generator emits

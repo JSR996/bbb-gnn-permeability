@@ -274,13 +274,13 @@ def sample_batches(checkpoints: list[Path], n_batches: int, group_size: int,
     """
     import torch
 
-    from .generator import SelfiesGenerator
+    from .brics_generator import load_generator
 
     out_dir.mkdir(parents=True, exist_ok=True)
     k = 0
     for ci, ck in enumerate(checkpoints):
         torch.manual_seed(seed + 1000 * ci)
-        gen = SelfiesGenerator.load(Path(ck) / "bbbp_grpo.pt", device)
+        gen = load_generator(Path(ck) / "bbbp_grpo.pt", device)
         for _ in range(n_batches):
             smi = gen.sample(group_size, device=device)["smiles"]
             (out_dir / f"step{k:04d}.json").write_text(

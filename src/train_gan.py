@@ -37,10 +37,19 @@ from torch_geometric.data import Batch
 from .datasets import ROOT, _load_raw
 from .diversity import reference_stats, summarize
 from .featurize import FEATURE_ID, graphs_from_smiles
+from .brics_generator import BricsGenerator
 from .generator import CKPT_DIR, SelfiesGenerator
 from .grpo import clipped_loss, group_advantages
 from .models import build_model
 from .reward import assemble, load_frozen_classifier, score_terms, weights_at
+
+# Generator families. The BRICS policy is valid by construction; the SELFIES
+# one relies on training for validity. Both satisfy the same roll contract,
+# so nothing below this line branches on the choice.
+GENERATORS = {"selfies": SelfiesGenerator, "brics": BricsGenerator}
+WARM_NAMES = {"selfies": "{dataset}_pretrained.pt",
+              "brics": "{dataset}_brics_pretrained.pt"}
+PRETRAIN_CMD = {"selfies": "src.generator", "brics": "src.brics_generator"}
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -160,6 +169,19 @@ def train(
     seed: int = 0,
     warm_start: str | None = None,
     threads: int | None = None,
+    generator: str = "selfies",
+    # The reward ensemble's seed is a ROBUSTNESS AXIS, not a tuning knob. All
+    # ten seeds carry gin+gat+gine on element-wise identical folds, so any one
+    # of them is a legal ensemble, and member-mean AUC spans 0.818-0.914. A
+    # seed must NOT be chosen from that table: picking the reward by a test
+    # statistic selects the instrument on test-fold information, and "a seed
+    # nearer the mean" is as much a selection as "the best seed". 0 is the right
+    # default precisely because it was fixed before anyone looked. Vary it
+    # BETWEEN runs to show a result is not an artefact of one fold; never mix
+    # seeds within an ensemble, since the seed reseeds the scaffold split and
+    # members from different seeds have trained on each other's held-out
+    # molecules.
+    reward_seed: int = 0,
 ) -> dict:
     # Which pretrained decoder seeds theta_0, and therefore pi_ref, since
     # Eq. (18) sets pi_ref := pi_theta0. Swapping it swaps the KL anchor too,
@@ -185,13 +207,17 @@ def train(
             raise ValueError(f"threads must be >= 1, got {threads}")
         torch.set_num_threads(threads)
 
-    warm = Path(warm_start) if warm_start else CKPT_DIR / f"{dataset}_pretrained.pt"
+    if generator not in GENERATORS:
+        raise ValueError(f"generator must be one of {sorted(GENERATORS)}, got {generator!r}")
+    Gen = GENERATORS[generator]
+    warm = (Path(warm_start) if warm_start
+            else CKPT_DIR / WARM_NAMES[generator].format(dataset=dataset))
     if not warm.exists():
         raise FileNotFoundError(
             f"no warm start at {warm}. GRPO cannot bootstrap from a uniform "
             f"policy -- every group would be all-invalid and carry zero "
             f"advantage. Run it first: "
-            f"python -m src.generator --pretrain --dataset {dataset}"
+            f"python -m {PRETRAIN_CMD[generator]} --pretrain --dataset {dataset}"
         )
     bad = set(drop) - set(W0)
     if bad or len(set(drop)) >= len(W0):
@@ -203,15 +229,15 @@ def train(
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    gen = SelfiesGenerator.load(warm, device)
+    gen = Gen.load(warm, device)
     # Reference policy for the KL term in the diagram: the pretrained generator,
     # frozen. It is what keeps GRPO from drifting off the space of molecules the
     # MLE warm start actually learned while chasing reward.
-    ref = SelfiesGenerator.load(warm, device)
+    ref = Gen.load(warm, device)
     ref.eval().requires_grad_(False)
 
     disc = Discriminator().to(device)
-    classify = load_frozen_classifier(dataset=dataset, device=device)
+    classify = load_frozen_classifier(dataset=dataset, seed=reward_seed, device=device)
     # Frozen exactly as the permeability classifier is. Loaded only when
     # weighted, so a run without a toxicity model costs nothing and the
     # term stays inert rather than absent.
@@ -373,6 +399,8 @@ def train(
             "w_alert": w_alert,
             "c_transform": c_transform, "drop": list(drop),
             "warm_start": str(warm),
+            "generator": generator,
+            "reward_seed": reward_seed,
             # Thread count is part of the configuration, not of the machine.
             # OpenMP changes the order of float reductions, and this training
             # loop is chaotic: a run that reproduces to 2e-16 at a matching
@@ -504,6 +532,13 @@ if __name__ == "__main__":
     ap.add_argument("--threads", type=int, default=None,
                     help="pin torch thread count; required for any run that "
                          "will be compared against another (see findings 5)")
+    ap.add_argument("--generator", default="selfies", choices=sorted(GENERATORS),
+                    help="brics assembles fragments and is valid by "
+                         "construction; selfies decodes tokens")
+    ap.add_argument("--reward-seed", type=int, default=0,
+                    help="scaffold-split seed of the frozen reward ensemble. A "
+                         "robustness axis: vary it between runs, never within "
+                         "an ensemble, and never choose it from a test table")
     args = ap.parse_args()
 
     if args.steps:
@@ -517,6 +552,7 @@ if __name__ == "__main__":
               min_mw=args.min_mw, aggregate=args.aggregate,
               alert_lambda=args.alert_lambda, w_alert=args.w_alert,
               drop=tuple(t for t in args.drop.split(",") if t),
-              warm_start=args.warm_start, threads=args.threads)
+              warm_start=args.warm_start, threads=args.threads,
+              generator=args.generator, reward_seed=args.reward_seed)
     else:
         _self_check()

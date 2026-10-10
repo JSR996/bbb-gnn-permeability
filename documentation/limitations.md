@@ -409,6 +409,44 @@ no information the atom readout lacks. Arm 1b is independent and still open.
 construction and an action space that cannot emit atom spam, which are
 properties of the action space, not of the classifier.
 
+### 5.0d HRM fails, and completes the picture on depth **[measured]**
+
+Arm 1b. HRM (Wang et al. 2025) couples a fast low-level and a slow high-level
+recurrent module, weight-shared across all steps, so the network buys effective
+depth without parameters. `src/models_hrm.py` keeps the three things that
+define it -- two timescales, weight sharing, and the one-step gradient (every
+cycle but the last runs under `no_grad`) -- and drops the published 27M
+parameter count, ACT halting and deep supervision. At `n_inner=3, n_outer=2` it
+is **6 message-passing steps from 2 convs' worth of weights**, against the flat
+model's 3 steps from 3 convs, at **1.1-1.6x** the flat parameter count. So the
+comparison isolates the recurrence rather than capacity.
+
+BBBP, 10 seeds, paired on seed:
+
+| gcn | sage | gin | gat | pooled |
+|---|---|---|---|---|
+| -0.0417 | -0.0291 | -0.0382 | -0.0433 | **-0.0381 +/- 0.0059** |
+
+All four significant, same direction, at 1.7x the runtime (116 s/run vs 70).
+
+**This was predicted and the prediction is the useful part.** The 2x2 in 5.0c
+measured long-range atom connectivity at **-0.019** and readout width at
+**+0.130**. Depth is the axis this task does not reward, and HRM is an
+architecture whose entire proposition is cheap depth. Giving a model 6
+message-passing steps where 3 sufficed does not help; it costs.
+
+**Note the pre-screen nearly let this through.** The documented kill criterion
+was "best HRM below best flat minus one marginal SD". Marginal SD is 0.0366
+because the seed-to-seed spread is large, so at 3 seeds HRM's best (0.8993)
+cleared a threshold of 0.8775 and the criterion said PASS -- while all four
+operators were already negative. A criterion built on the MARGINAL spread is
+far too lenient for a PAIRED comparison, where the relevant scale is the paired
+SEM (0.0059, six times smaller). Future pre-screens should test the paired
+delta against zero, not the best arm against a marginal band.
+
+Runs: `results/hrm/`. B3DB was not run: a -0.038 pooled effect with every cell
+significant does not need a second dataset to confirm the sign.
+
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked
 by the proxy (403), so torch has to come from PyPI. There is no

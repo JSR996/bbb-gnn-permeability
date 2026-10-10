@@ -177,10 +177,31 @@ different ones:
   under a scaffold split — the split exists to give test molecules unseen
   cores, and a global vocabulary hands every test fragment its own embedding
   slot. Rare fragments map to `UNK`.
-- **Generator** (you): the whole corpus is fine, you make no held-out claim.
-  But you need a **lower floor or none**: frequency pruning that is a harmless
-  long tail for a classifier is a *reconstruction failure* for a generator,
-  which cannot emit a fragment it has no token for.
+- **Generator** (you): the whole corpus is fine, you make no held-out claim,
+  and the floor is **`min_count=1`, i.e. no pruning at all**. Frequency pruning
+  that is a harmless long tail for a classifier is a *reconstruction failure*
+  for a generator, which cannot emit a fragment it has no token for.
+
+  The decisive number is not how many fragments a floor drops, it is how many
+  **molecules stop being reconstructable** — those leave the MLE corpus, and
+  the warm start is not optional (§5.4):
+
+  | floor | BBBP vocab | BBBP molecules fully covered | B3DB vocab | B3DB covered |
+  |---|---|---|---|---|
+  | **1** | **2625** | **1965 (100%)** | **8060** | **7805 (100%)** |
+  | 2 | 726 | 456 (**23.2%**) | 2409 | 2802 (35.9%) |
+  | 3 | 439 | 216 (11.0%) | 1520 | 1735 (22.2%) |
+  | 5 | 260 | 84 (4.3%) | 858 | 791 (10.1%) |
+
+  `min_count=2` looks cheap — it drops "only" the singletons — but it leaves
+  **23% of BBBP reconstructable**. It would delete three quarters of the warm
+  start to save a softmax over 2625 classes, which is nothing at this scale.
+  Singletons are most of the vocabulary and almost none of the occurrences,
+  but they are spread thinly across nearly every molecule, so pruning them
+  hits the corpus far harder than the occurrence share suggests.
+
+  Consequence: with no floor, `UNK` is never needed on the generator side.
+  Keep the token (the classifier uses it) but assert it is never emitted.
 
 Record whichever you used.
 
@@ -344,29 +365,46 @@ seed-0 checkpoints you score against are real runs under the frozen contract
 (`feature_id=c0c3bbb8`, `norm=layer`, `split=murcko+tanimoto@0.6`), identical in
 configuration to every sweep run. There is no pending swap.
 
-**But they are one seed, and seed 0 is the lucky one.** All three sit well
-above their own 10-seed means:
+**All ten seeds are available.** Every seed 0-9 has `gin`, `gat` and `gine`
+present with **element-wise identical fold indices** (verified), so any single
+seed is a legitimate ensemble. Mean ROC-AUC of the three members, by seed:
 
-| member | seed 0 | 10-seed mean |
-|---|---|---|
-| gin | 0.8972 | 0.8639 ± 0.0422 |
-| gat | 0.9347 | 0.8877 ± 0.0331 |
-| gine | 0.8971 | 0.8544 ± 0.0520 |
+| seed | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| mean | **0.910** | 0.867 | 0.901 | 0.885 | 0.873 | 0.838 | 0.855 | 0.914 | 0.827 | 0.818 |
 
-Two consequences for you:
+Seed 0 is on the high side — 2nd of 10, against a range of 0.818-0.914.
+
+**Default to seed 0 anyway, and do not pick a seed by this table.** Choosing
+the reward by a test statistic is selecting your instrument on test-fold
+information; "a seed nearer the mean" is as much a selection as "the best
+seed". Seed 0 is the right default precisely because it was fixed before
+anyone looked at these numbers.
+
+An earlier revision of this section said seed 0 makes `C(m)` "more confident
+than the model is on average". That was loose and is withdrawn: a high test
+ROC-AUC means stronger *ranking on that fold*, not higher confidence on novel
+generated chemistry, and the two are not the same thing. The sound caution is
+narrower:
 
 1. **Never quote a seed-0 number as the classifier's accuracy.** The headline
    figures are the 10-seed means in `results/master_comparison.csv`.
-2. **Your reward is built on the ensemble's best-case split.** `C(m)` is
-   therefore more confident than the model is on average, and the generator
-   optimizes against that confidence. When you see the classifier term
-   saturate, part of it is this, not only reward hacking.
+2. **Your reward is one draw from a spread of 0.818-0.914.** A generation
+   result that holds only under one reward seed is a property of that
+   classifier, not of your method.
 
-**One seed is structural, not laziness.** The seed reseeds the scaffold split,
-so an ensemble must share a fold or its members have trained on each other's
-held-out molecules — `reward._self_check` asserts the `test_preds.npz` `idx`
-arrays match element-wise. If you want a less favourable reward, use a
-different single seed (`load_frozen_classifier(seed=...)`), not a mixture.
+So: **expose `--reward-seed` (default 0) and treat it as a robustness axis,
+not a tuning knob.** `load_frozen_classifier` already takes `seed=`; it just
+needs threading through `train_gan.py`'s CLI and into `config.json`. Run the
+headline generation result at **two or more reward seeds** and report both.
+That is the same discipline `paired_analysis` enforces on the classifier side,
+and it costs one extra run rather than an argument about which seed is fair.
+
+**One seed per ensemble is structural, not laziness.** The seed reseeds the
+scaffold split, so members must share a fold or they have trained on each
+other's held-out molecules — `reward._self_check` asserts the
+`test_preds.npz` `idx` arrays match element-wise. Vary the seed *between*
+runs; never mix seeds *within* an ensemble.
 
 **If the norm default flips** (see §2 and `documentation/limitations.md` 5.0),
 these three get retrained and you re-pull. `run_contract` replays whichever

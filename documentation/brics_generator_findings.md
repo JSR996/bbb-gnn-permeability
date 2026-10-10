@@ -4,12 +4,18 @@ The BRICS fragment-assembly generator against the SELFIES token generator, under
 one reward. The engine reconstructs exactly and validity is near-total.
 
 **Compared as frontiers rather than as points: where both families operate the
-two curves cross, so neither dominates the diversity-vs-confidence trade. BRICS'
-frontier extends past SELFIES' ceiling -- it reaches scaffold 0.906 where SELFIES
-saturates at 0.835 and then turns back -- and BRICS dominates on validity at
-every setting. The cost is sensitivity: BRICS needs kl_coef >= 1.0 to avoid
-collapsing to duplicates, where SELFIES holds 0.99 unique across the whole
-range.**
+two curves cross, so neither dominates on diversity-vs-confidence. BRICS'
+frontier extends further -- scaffold 0.906 against 0.835, 2.09 SD -- and BRICS
+dominates on validity at every setting. The cost is sensitivity: BRICS needs
+kl_coef >= 1.0 to avoid collapsing to duplicates, where SELFIES holds 0.99
+unique across the whole range.**
+
+**And the off-instrument checks reverse the confidence axis (section 3b).** Every
+BRICS point's instrument gap `C(BBBP) - C(B3DB)` brackets the real-drug reference
+of +0.037; every SELFIES point is 1.6x to 2.7x it, with no overlap across 8
+points. D_real agrees: BRICS 0.931-0.947 against real drugs' 0.940, SELFIES
+0.710-0.800. So BRICS' lower `c_mean` is honesty rather than weakness, and the
+"BRICS pays confidence for validity" framing in section 3 is wrong.
 
 A single matched-`kl_coef` comparison cannot say this, and an earlier version of
 this document tried to. `kl_coef` is not commensurable across these action spaces
@@ -130,25 +136,30 @@ sweep's `ent_coef=0.0` slice and the two frontiers are paired cell-for-cell.
 | SELFIES | 1.0 | 0.835 | 0.849 | 0.996 | 1.862 | 0.9911 |
 | SELFIES | 3.0 | 0.819 | 0.820 | 0.992 | 1.755 | 0.9899 |
 
-**Three things only the frontier shows.**
+**What the frontier shows, sized against noise.** The paired SEM of 0.0170 at
+n=4 implies a single-point SD of about 0.034 on `scaffold_frac`, so every
+difference below is quoted in those units.
 
-*The SELFIES curve turns back.* Scaffold goes 0.638 -> 0.809 -> 0.835 -> 0.819:
-past kl=1.0 more regularization costs confidence **and** diversity. BRICS is
-monotone (0.464 -> 0.723 -> 0.887 -> 0.906). So SELFIES has a reachable ceiling
-of 0.835 against BRICS' 0.906 -- BRICS can access structural diversity SELFIES
-does not reach at any coefficient tested.
+*BRICS' frontier extends further.* 0.906 against 0.835 is **2.09 SD** -- BRICS
+reaches structural diversity SELFIES does not attain at any coefficient tested.
+This is the claim that carries weight.
+
+*SELFIES' apparent turn-back does not.* Scaffold goes 0.638 -> 0.809 -> 0.835 ->
+0.819, and that last step is **0.47 SD**: indistinguishable from flat. An earlier
+version of this section led with it. The defensible statement is that SELFIES
+*saturates* above kl=1.0 while BRICS keeps rising, not that it reverses.
 
 *In the overlap, the frontiers cross.* Interpolating C at matched scaffold over
 0.638-0.835 gives mean +0.0031 for BRICS with range −0.0111 to +0.0466 and
 **three sign flips**. Neither family is above the other; they interleave. The
 positive mean is carried almost entirely by the single point at scaffold 0.835,
-which is where SELFIES' curve has already begun to turn, so the mean is not a
-summary worth quoting.
+so it is not a summary worth quoting.
 
-*Joint Pareto front* over (scaffold, C), via `pareto.dominance_count`: all four
-BRICS points are non-dominated, and only two of four SELFIES points are --
-SELFIES at kl=1.0 and kl=3.0 are both strictly dominated by BRICS at kl=1.0.
-Adding `rdkit_valid` as a third objective does not change the membership.
+*The Pareto count is provisional.* Over (scaffold, C) via
+`pareto.dominance_count`, all four BRICS points are non-dominated and only two of
+four SELFIES points are. But the dominance of BRICS@1.0 over SELFIES@1.0 rests on
+a **1.53 SD** scaffold difference, so "two of four" is a property of this draw
+rather than a structural fact. Adding `rdkit_valid` does not change membership.
 
 **Validity is the one axis with uniform dominance.** BRICS is 0.9996-1.0000 flat
 across the whole range; SELFIES is 0.9899-0.9966 and *degrades* as kl rises. Not
@@ -159,6 +170,65 @@ SELFIES holds 0.989, and BRICS needs kl >= 1.0 before duplicates vanish. SELFIES
 is insensitive to the coefficient on that axis across the entire range. If a
 coefficient has to be chosen without a sweep, SELFIES is the safer default and
 BRICS is the one that repays tuning.
+
+## 3b. Off-instrument: the C axis points the other way
+
+A metrics table cannot distinguish "better" from "Goodharting differently", so
+the frontier is scored on the two checks `aggregate_arms` defines: the
+**instrument gap** `C(BBBP) - C(B3DB)`, the training ensemble minus a judge the
+reward never used, and **D_real**, a fixed discriminator's score. Pooled over
+each run's last 20 sample steps with `aggregate_arms.pool`.
+
+| family | kl | scaffold | C(BBBP) | C(B3DB) | gap | abs(gap−real) | D_real |
+|---|---|---|---|---|---|---|---|
+| BRICS | 0.1 | 0.464 | 0.927 | 0.900 | +0.027 | 0.010 | 0.931 |
+| BRICS | 0.3 | 0.723 | 0.912 | 0.883 | +0.029 | 0.008 | 0.939 |
+| BRICS | 1.0 | 0.887 | 0.848 | 0.813 | +0.035 | **0.002** | 0.939 |
+| BRICS | 3.0 | 0.906 | 0.771 | 0.730 | +0.042 | 0.005 | 0.947 |
+| SELFIES | 0.1 | 0.638 | 0.956 | 0.874 | +0.082 | 0.044 | 0.710 |
+| SELFIES | 0.3 | 0.809 | 0.923 | 0.862 | +0.060 | 0.023 | 0.774 |
+| SELFIES | 1.0 | 0.835 | 0.857 | 0.769 | +0.088 | 0.051 | 0.792 |
+| SELFIES | 3.0 | 0.819 | 0.824 | 0.725 | +0.099 | 0.062 | 0.800 |
+| **REAL BBB+ drugs** | | | 0.906 | 0.869 | **+0.037** | — | **0.940** |
+
+**This reverses the reading of the C axis.** Sections 3 and 3a treat BRICS' lower
+`c_mean` as a cost. It is not: every BRICS point's instrument gap (+0.027 to
++0.042) brackets the real-drug reference of +0.037, while every SELFIES point
+(+0.060 to +0.099) is 1.6x to 2.7x it. The two families **do not overlap at all**
+across 8 points -- max BRICS 0.042 < min SELFIES 0.060. SELFIES' higher
+confidence is substantially the selector's blind spot being exploited, not better
+molecules, which is exactly the failure the check exists to catch.
+
+**D_real says the same thing louder.** BRICS scores 0.931-0.947 against real
+drugs' 0.940 -- its molecules are as real-looking as approved drugs to a
+discriminator neither family trained against. SELFIES sits at 0.710-0.800,
+matching the long-standing "generator 0.80 vs real 0.94" note in
+`aggregate_arms`. BRICS closes the realism gap that observation describes.
+
+So at matched diversity BRICS' lower `c_mean` is **honesty, not weakness**, and
+`BRICS@kl=1.0` is the most real-drug-like point measured on either curve (gap
++0.035 against +0.037, D_real 0.939 against 0.940) while also being the
+highest-diversity point not bought with a confidence collapse.
+
+Two corrections this produced:
+
+- **The real-drug reference is +0.037, not −0.029**, and the sign is flipped.
+  `aggregate_arms`' docstring quotes −0.029 from the retired ensemble. Since the
+  whole check is "how far from the real-drug gap", a stale reference inverts the
+  verdict, so it is recomputed here under the current GraphNorm ensembles.
+- **`aggregate_arms.offinstrument()` does not run on this branch.** Its hardcoded
+  `results/gan/seed0/bbbp_disc.pt` is BatchNorm-era, so `load_state_dict` fails
+  with `running_mean` against `mean_scale`. Loading it as
+  `Discriminator(norm="batch")` -- replaying the recorded architecture rather than
+  imposing today's default, as `run_contract` does for classifiers -- fixes it.
+  The file is not in this half's ownership, so it is reported, not edited.
+
+Caveat: B3DB aggregates BBBP among its sources, so it is an *unused* judge rather
+than an independent one, and some shared molecules carry contradictory labels.
+It is the best available unseen judge, not a clean holdout. Each point is also
+n=1, so the within-family spread (BRICS 0.015 wide, SELFIES 0.039) is the only
+noise estimate -- but the families not overlapping across all 8 points is a
+stronger signal than any single comparison.
 
 ## 4. Retraction: the diversity collapse was a mis-set coefficient
 
@@ -286,6 +356,13 @@ does not arise at the tuned setting.
   ceilings) rest on single draws and want replication before they are leaned on.
 - **Only one axis of the sweep was carried to the frontier.** `ent_coef` is held
   at 0, justified by section 5 but not re-tested per family.
+- **The instrument gap uses B3DB, which is not independent.** B3DB aggregates
+  BBBP among its sources, so it is a judge the reward never *used* rather than a
+  clean holdout, and shared molecules can carry contradictory labels. A gap
+  measured against a genuinely external set (the Adenot/Wang holdouts) would be
+  stronger, but at n=55-59 those cannot support per-arm means.
+- **Section 3b is n=1 per point.** The families not overlapping across all 8
+  points is the real signal; no individual gap difference has an error bar.
 - **The 2x2 cannot separate its two noise sources** -- one run per cell is zero
   residual df. At kl=0.3: reward-seed effect −0.072, warm-start effect −0.081,
   the same order as each other and as the between-cell spread.
@@ -307,10 +384,19 @@ degrading as kl rises). The action-space argument is structural. And the
 diversity objection that appeared to count against it was an artifact of a
 transplanted coefficient.
 
+It also turns out to buy something nobody claimed for it: BRICS is markedly
+harder on the instrument. Its gap to an unseen judge tracks real drugs at every
+coefficient and its molecules are as real-looking as approved drugs to a fixed
+discriminator (section 3b). That was not part of the case for BRICS and is the
+strongest result in this report.
+
 Two things are narrower than the original claim. Validity is a ~95.4% untrained
 floor rather than a guarantee, because aromaticity is not covered. And BRICS is
 the more hyperparameter-sensitive family: it reaches diversity SELFIES cannot,
-but only after a sweep, and under weak regularization it fails worse. The honest
-summary is not "BRICS is better" or "BRICS matches" but: **the frontiers
-interleave where they overlap, BRICS' extends further, BRICS dominates on
-validity, and BRICS costs a sweep that SELFIES does not.**
+but only after a sweep, and under weak regularization it fails worse.
+
+The honest summary is not "BRICS is better" or "BRICS matches" but: **the
+diversity frontiers interleave where they overlap and BRICS' extends further;
+BRICS dominates on validity and on both off-instrument checks; and BRICS costs a
+sweep that SELFIES does not.** The one axis where SELFIES leads -- raw `c_mean`
+at matched diversity -- is the axis the off-instrument checks say not to trust.

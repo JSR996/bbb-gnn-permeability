@@ -1,0 +1,192 @@
+# Generator pipeline: what to run
+
+The settled de-novo generation pipeline, as a runnable thing. What was *learned*
+is in `brics_generator_findings.md`; this document is what to *run* and what
+each number is worth. You should not need the findings doc to use this one.
+
+**Nothing this pipeline emits is a synthesis candidate.** Every molecule is an
+unvalidated hypothesis. That does not change because the pipeline is finished —
+see "What the output is not".
+
+---
+
+## 1. The settled configuration
+
+```bash
+# 1. gate: the contract must hold before anything else
+python -m src.featurize        # FEATURE_ID must print c0c3bbb8
+python -m src.brics
+python -m src.reward           # refuses on a feature_id or fold mismatch
+python -m src.grpo
+
+# 2. engine self-checks
+python -m src.brics_assembly   # reconstruction must be 2039/2039
+python -m src.brics_generator
+
+# 3. MLE warm start (~9 min CPU, 30 epochs). NOT optional.
+python -m src.brics_generator --pretrain --dataset bbbp --seed 0
+
+# 4. GRPO at the settled point (~6 min CPU at 250 steps)
+python -m src.train_gan --generator brics --steps 250 --threads 6 \
+    --seed 0 --reward-seed 0 --kl-coef 1.0 \
+    --warm-start results/generator/bbbp_brics_pretrained.pt \
+    --out-dir results/brics_kl1/rs0_ws0
+
+# 5. screen and rank (after the policy has settled; 250-step runs -> 150)
+python -m src.postfilter results/brics_kl1/rs0_ws0 results/brics_kl1/rs0_ws1 \
+    --from-step 150 --out results/candidates/brics
+```
+
+Everything else is a default. `group_size=64`, `min_heavy_atoms=10` and
+`ppo_epochs=4` are unchanged from the validated SELFIES configuration.
+
+**`--kl-coef 1.0`, not the `0.3` default.** This is the one setting that must be
+passed explicitly and the single most important line in this document.
+`kl_coef=0.3` is the repo default because it survived validation *for the SELFIES
+generator*; it does not transfer. At 0.3 the BRICS generator loses most of its
+structural diversity (scaffold 0.643, 26% of each group literal duplicates). At
+1.0 it does not. The coefficient is not commensurable across the two action
+spaces — the same number produces 10.7x the KL for BRICS, because the clipped
+loss is a token-level masked mean and BRICS takes ~5.1 decisions over a 6051-way
+softmax against SELFIES' ~38.6 over 77.
+
+**`--threads` is configuration, not tuning.** OpenMP changes float reduction
+order and this loop is chaotic, so two runs compared against each other must
+pass the same value. It is recorded in each run's `config.json`.
+
+**`--reward-seed` is a robustness axis, not a knob.** It selects which
+scaffold-split fold the frozen `gin`/`gat`/`gine` ensemble comes from. All ten
+seeds are legal ensembles with element-wise identical folds. Do not pick one by
+looking at a test table — 0 is right because it was fixed before anyone looked.
+Vary it *between* runs to show a result is not one fold's artefact; never mix
+seeds within an ensemble, since the seed reseeds the split and members from
+different seeds have trained on each other's held-out molecules.
+
+## 2. What each component is worth
+
+| component | measured | n |
+|---|---|---|
+| assembly reconstruction | **2039/2039 exact** | full BBBP |
+| sanitization, trained policy | 0.9997 +/- 0.0001 | 3 GRPO seeds |
+| sanitization, untrained policy | 0.9539 | 2560 samples |
+| scaffold diversity at the settled point | **0.8643 +/- 0.0117 SEM** (sd 0.0202) | 3 GRPO seeds |
+| exact-duplicate freedom | 0.9821 +/- 0.0030 SEM | 3 GRPO seeds |
+| classifier term `C` | 0.8824 +/- 0.0056 SEM | 3 GRPO seeds |
+| total reward | 2.1517 +/- 0.0123 SEM | 3 GRPO seeds |
+| instrument gap `C(BBBP) - C(B3DB)` | **+0.035** against real drugs' +0.037 | 1 |
+| screened candidate set | **1746 survivors / 5888 pooled (30%)** | 2 runs |
+
+The three-seed figures are the headline. `scaffold 0.864` was first measured as a
+single draw and reproduced at 0.864 as a three-seed mean, so it is not a
+one-rollout artefact.
+
+**The slot must be part of the action, and stereo must be stripped.** Both are
+engine invariants, not tuning: choosing the lowest-index compatible dummy drops
+reconstruction to 63.5%, and keeping stereochemistry drops it to 81.0% (all 387
+residual failures stereo-only, because `reassemble` appends the new bond after
+the dummy is removed and the anchor's parity flips). `brics_assembly`'s
+self-check asserts exactness, so a regression in either is loud.
+
+## 3. Reproducing from a clean clone
+
+```bash
+git clone <repo> && cd bbb-gnn-permeability
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt           # requirements.lock pins exact versions
+python -m src.reward                      # the gate. If it fails, STOP.
+python -m src.brics_generator --pretrain  # ~9 min
+python -m src.train_gan --generator brics --steps 250 --threads 6 \
+    --seed 0 --reward-seed 0 --kl-coef 1.0 \
+    --warm-start results/generator/bbbp_brics_pretrained.pt \
+    --out-dir results/brics_kl1/rs0_ws0
+```
+
+The classifier checkpoints the reward depends on are committed, so nothing in the
+scoring half needs retraining. **Run checkpoints are deliberately not committed**
+(~150 MB): they are deterministic given the committed warm start, `--seed` and
+the thread count recorded in each `config.json`. `history.csv`, `config.json` and
+`samples/` *are* committed, and `samples/` is what `postfilter` consumes, so the
+screen reproduces without re-running GRPO.
+
+Runs are CPU-only by design; these graphs are too small for accelerator launch
+overhead to pay off. ~1.46 s/step at group 64, so 250 steps is ~6 minutes.
+
+## 4. The candidate set
+
+`results/candidates/brics/` holds `screened.csv` (everything, with per-molecule
+rejection reasons) and `candidates.csv` (the top 25 by `C`).
+
+```
+pooled, deduplicated : 5888
+undersized           :  179
+structural defect    :  122
+targeted alert       : 1988
+catalogue alert      : 2819
+already in training  : 1419   (exact-SMILES only: 1009)
+SURVIVORS            : 1746 (30%)
+C among survivors    : mean 0.858  sd 0.175  43% above 0.95
+```
+
+**Ranking by `C` is meaningful here, and that had to be checked.** A ranking is
+noise when `C` has stopped discriminating — in the collapsed baseline its
+within-group sd fell to 0.006 with everything above 0.95, below the model's own
+MC-dropout uncertainty. Among these survivors the sd is **0.175**, so the
+ordering carries signal.
+
+**The ranking is one fold's opinion.** `C` comes from the reward seed, and
+`C(aspirin)` spans 0.43-0.79 across the ten available seeds. This set was
+screened and ranked at **reward seed 0**. That is recorded here because
+"ranked survivors" otherwise reads as fold-independent, which it is not.
+
+**The training-overlap check is constitution-level, and was not originally.**
+`postfilter`'s exact-SMILES test is stereo-sensitive, and this generator emits
+flat molecules, so training molecules with defined centres never matched: on this
+pool the exact test found 1009 and the constitution test 1486, leaving 171
+training molecules inside the reported survivors. `in_training_flat` now governs
+exclusion and `in_training_set` keeps the old number visible. Survivors fell
+1891 -> 1746 as a result.
+
+**Novelty is weaker than the survivor count suggests.** Of the top 25, 13 share a
+Murcko scaffold with a training molecule and 12 do not. The top-ranked survivors
+are recognizable CNS pharmacophores — phenothiazines, dibenzazepines,
+benzhydryl-piperazines — which is what recombining BRICS fragments of CNS drugs
+should produce. Constitutional novelty is screened; scaffold novelty is reported,
+not enforced.
+
+## 5. What the output is not
+
+- **Not synthesis candidates.** Every survivor is a hypothesis for evaluation.
+- **Not safe.** 39% of the real BBB+ drugs in BBBP fail the same screening union,
+  so passing it is not evidence of safety. The screen removes recognized
+  liabilities and says nothing about liabilities no catalogue encodes.
+- **Not novel scaffolds**, necessarily — see above.
+- **Not validated against measured permeability.** `C` is a classifier trained on
+  BBBP, which labels a *transport* property. Nothing in the label says "drug" and
+  nothing says "safe"; optimizing it once found carbon tetrachloride and freon-12
+  and scored them above caffeine. The size gate and `kl_coef=1.0` contain that
+  failure mode; they do not remove the objective that causes it.
+
+## 6. Known limits of the settled point
+
+- **Three GRPO seeds, one reward seed, one warm start** at the settled point. The
+  headline is a 3-seed mean; the reward-seed and warm-start axes were measured at
+  `kl=0.3` (effects −0.072 and −0.081 on final scaffold, one run per cell, so
+  point estimates with zero residual df).
+- **`kl_coef=1.0` was selected from a 4x3 sweep** and is the knee, not an
+  optimum: 3.0 buys scaffold 0.906 for `C` 0.781. One of the four paired cells
+  that confirmed it is the same configuration as the sweep cell that selected it
+  (it reproduced bit-identically, which is a determinism check but not
+  independence).
+- **Shape claims about the frontier are weaker than the operating point.** With
+  the now-measured single-run sd of 0.0202 (a two-draw difference is 0.0286):
+  BRICS' frontier extending past SELFIES' is 2.49 SD; BRICS@1.0 dominating
+  SELFIES@1.0 is 1.82 SD and remains provisional; the apparent SELFIES
+  "turn-back" is 0.56 SD and should not be claimed at all.
+- **Aromaticity is not guaranteed by construction.** Type compatibility plus an
+  explicit bond order guarantees connectivity and valence; joining two
+  type-compatible aromatic fragments can still produce a ring system RDKit
+  cannot kekulize. Untrained that is 4.6% of samples; the warm start removes it,
+  which means part of what those epochs teach is toolkit avoidance rather than
+  chemistry.
+- **No synthesizability claim.** BRICS assembly gives a retrosynthetic
+  plausibility floor by construction; nothing here tests it.

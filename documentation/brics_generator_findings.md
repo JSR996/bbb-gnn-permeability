@@ -137,16 +137,19 @@ sweep's `ent_coef=0.0` slice and the two frontiers are paired cell-for-cell.
 | SELFIES | 1.0 | 0.835 | 0.849 | 0.996 | 1.862 | 0.9911 |
 | SELFIES | 3.0 | 0.819 | 0.820 | 0.992 | 1.755 | 0.9899 |
 
-**What the frontier shows, sized against noise.** The paired SEM of 0.0170 at
-n=4 implies a single-point SD of about 0.034 on `scaffold_frac`, so every
-difference below is quoted in those units.
+**What the frontier shows, sized against noise.** The single-run sd on
+`scaffold_frac` is now **measured** rather than inferred: 0.0202 over 3 GRPO
+seeds at the settled point, so a difference between two independent single draws
+has sd 0.0286. (An earlier version of this section inferred 0.034 from the
+paired SEM, which was conservative.) Differences below are quoted in those
+units.
 
-*BRICS' frontier extends further.* 0.906 against 0.835 is **2.09 SD** -- BRICS
+*BRICS' frontier extends further.* 0.906 against 0.835 is **2.49 SD** -- BRICS
 reaches structural diversity SELFIES does not attain at any coefficient tested.
 This is the claim that carries weight.
 
 *SELFIES' apparent turn-back does not.* Scaffold goes 0.638 -> 0.809 -> 0.835 ->
-0.819, and that last step is **0.47 SD**: indistinguishable from flat. An earlier
+0.819, and that last step is **0.56 SD**: indistinguishable from flat. An earlier
 version of this section led with it. The defensible statement is that SELFIES
 *saturates* above kl=1.0 while BRICS keeps rising, not that it reverses.
 
@@ -159,7 +162,7 @@ so it is not a summary worth quoting.
 *The Pareto count is provisional.* Over (scaffold, C) via
 `pareto.dominance_count`, all four BRICS points are non-dominated and only two of
 four SELFIES points are. But the dominance of BRICS@1.0 over SELFIES@1.0 rests on
-a **1.53 SD** scaffold difference, so "two of four" is a property of this draw
+a **1.82 SD** scaffold difference, so "two of four" is a property of this draw
 rather than a structural fact. Adding `rdkit_valid` does not change membership.
 
 **Validity is the one axis with uniform dominance.** BRICS is 0.9996-1.0000 flat
@@ -358,7 +361,12 @@ does not arise at the tuned setting.
 
 ## 8. What these runs cannot tell you
 
-- **One GRPO seed.** All 24 runs use `--seed 0`; rollout noise is unsampled.
+- **~~One GRPO seed.~~ CLEARED at the settled point.** The settled configuration
+  (kl=1.0, rs0, ws0) now has 3 GRPO seeds: scaffold 0.8643 +/- 0.0117 SEM
+  (sd 0.0202), unique 0.9821 +/- 0.0030, C 0.8824 +/- 0.0056, reward
+  2.1517 +/- 0.0123, rdkit_valid 0.9997 +/- 0.0001. The single-draw figure was
+  0.864 and the 3-seed mean is 0.864. The *frontier* runs remain single-seed, so
+  the shape claims above are still single draws sized against this sd.
 - **`kl_coef=1.0` was selected from section 5's grid**, and one of the four
   paired cells (`rs0_ws0`) is the same configuration as the sweep cell that
   selected it. It reproduced bit-identically (0.8874 both ways, a useful

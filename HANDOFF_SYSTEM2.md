@@ -11,14 +11,31 @@ discussion, and each contradiction is backed by a number from this repo.
 
 ## 0. First five minutes
 
+Your clone probably points only at `sankarhariharan2007-kali`. The work is on
+the fork, so add it, then branch off the contract — **do not commit to
+`classifier-v2`**, system-1 owns that branch and two machines pushing to it
+will collide.
+
 ```bash
-git fetch --tags && git checkout classifier-v2 && git pull
-git describe --tags          # expect: contract-v2
-python -m src.brics          # fragment substrate self-check
+git remote add myfork https://github.com/JSR996/bbb-gnn-permeability 2>/dev/null
+git fetch myfork --tags
+git checkout -b brics-generator contract-v2      # your branch, off the frozen contract
+git config user.name  "JSR996"
+git config user.email "shrenikrjnasa@gmail.com"
+```
+
+Then confirm the contract holds on this machine:
+
+```bash
 python -m src.featurize      # prints FEATURE_ID -- must be c0c3bbb8
-python -m src.reward         # the cross-half gate; must pass
+python -m src.brics          # fragment substrate self-check
+python -m src.reward         # THE GATE: must pass
 python -m src.grpo
 ```
+
+Push with `git push -u myfork brics-generator`. Pull system-1's later work with
+`git fetch myfork && git merge myfork/classifier-v2` when you need the 10-seed
+ensemble (section 8).
 
 If `python -m src.reward` passes, your reward is wired to a classifier that
 matches this code. If it raises a `feature_id` error, **stop** — do not work

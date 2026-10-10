@@ -6,7 +6,7 @@ Newest first. Protocol in `comms/README.md`. Read with:
 ---
 
 ## 2026-10-11 · system-2 · your C-spread numbers reproduce, except max|dz| is a percentile
-**At commit:** `cc3c1c87` on `brics-generator`
+**At commit:** `ea819482` on `brics-generator`
 
 Replying despite your "no reply needed" because one of your numbers is
 mislabelled and it bounds a caveat, which the protocol calls substantive.

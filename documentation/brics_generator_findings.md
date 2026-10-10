@@ -1,10 +1,20 @@
 # BRICS assembly generator: what it bought, and what it cost
 
 The BRICS fragment-assembly generator against the SELFIES token generator, under
-one reward. The engine reconstructs exactly and validity is near-total. **At each
-family's own tuned KL coefficient the two are not distinguishable on structural
-diversity**; BRICS trades classifier confidence for validity at the same total
-reward.
+one reward. The engine reconstructs exactly and validity is near-total.
+
+**Compared as frontiers rather than as points: where both families operate the
+two curves cross, so neither dominates the diversity-vs-confidence trade. BRICS'
+frontier extends past SELFIES' ceiling -- it reaches scaffold 0.906 where SELFIES
+saturates at 0.835 and then turns back -- and BRICS dominates on validity at
+every setting. The cost is sensitivity: BRICS needs kl_coef >= 1.0 to avoid
+collapsing to duplicates, where SELFIES holds 0.99 unique across the whole
+range.**
+
+A single matched-`kl_coef` comparison cannot say this, and an earlier version of
+this document tried to. `kl_coef` is not commensurable across these action spaces
+(section 4), so comparing at the same number is arbitrary whichever number is
+chosen.
 
 **This supersedes an earlier version of this document that reported BRICS losing
 0.27 of scaffold diversity.** That measurement was real but its interpretation
@@ -95,11 +105,60 @@ n=4 cells, 3 df, t_crit = 3.182:
 | `c_mean` | −0.0536 | 0.0066 | −8.16 | 0.004 | differs |
 | `rdkit_valid_frac` | +0.0052 | 0.0002 | 25.87 | 0.000 | differs |
 
-So at its own coefficient BRICS **matches** SELFIES on scaffold diversity and
-total reward, is marginally behind on exact-duplicate rate (0.982 vs 0.995),
-buys **+0.0052 validity**, and pays **−0.054 of classifier confidence**. The
-trade is validity for confidence, at equal reward -- not diversity for
-confidence.
+So at *these two* coefficients BRICS matches SELFIES on scaffold diversity and
+total reward, is marginally behind on exact-duplicate rate (0.982 vs 0.995), buys
+**+0.0052 validity**, and pays **−0.054 of classifier confidence**.
+
+That is a claim about two points, and `kl_coef=1.0`-vs-`0.3` is as arbitrary a
+pairing as `0.3`-vs-`0.3` once the coefficient is known not to be commensurable.
+Section 3a is the comparison that does not depend on choosing a pairing.
+
+## 3a. The two frontiers
+
+`kl_coef` in {0.1, 0.3, 1.0, 3.0} per family, 250 steps, current reward, fixed to
+reward seed 0 / warm start ws0 / GRPO seed 0 -- so the BRICS column is the
+sweep's `ent_coef=0.0` slice and the two frontiers are paired cell-for-cell.
+
+| family | kl | scaffold | C | unique | reward | rdkit_valid |
+|---|---|---|---|---|---|---|
+| BRICS | 0.1 | 0.464 | 0.971 | 0.511 | 2.358 | 1.0000 |
+| BRICS | 0.3 | 0.723 | 0.947 | 0.830 | 2.305 | 0.9999 |
+| BRICS | 1.0 | 0.887 | 0.871 | 0.986 | 2.130 | 0.9996 |
+| BRICS | 3.0 | **0.906** | 0.782 | 0.993 | 1.945 | 0.9999 |
+| SELFIES | 0.1 | 0.638 | 0.960 | 0.989 | 2.255 | 0.9966 |
+| SELFIES | 0.3 | 0.809 | 0.921 | 0.996 | 2.110 | 0.9948 |
+| SELFIES | 1.0 | 0.835 | 0.849 | 0.996 | 1.862 | 0.9911 |
+| SELFIES | 3.0 | 0.819 | 0.820 | 0.992 | 1.755 | 0.9899 |
+
+**Three things only the frontier shows.**
+
+*The SELFIES curve turns back.* Scaffold goes 0.638 -> 0.809 -> 0.835 -> 0.819:
+past kl=1.0 more regularization costs confidence **and** diversity. BRICS is
+monotone (0.464 -> 0.723 -> 0.887 -> 0.906). So SELFIES has a reachable ceiling
+of 0.835 against BRICS' 0.906 -- BRICS can access structural diversity SELFIES
+does not reach at any coefficient tested.
+
+*In the overlap, the frontiers cross.* Interpolating C at matched scaffold over
+0.638-0.835 gives mean +0.0031 for BRICS with range −0.0111 to +0.0466 and
+**three sign flips**. Neither family is above the other; they interleave. The
+positive mean is carried almost entirely by the single point at scaffold 0.835,
+which is where SELFIES' curve has already begun to turn, so the mean is not a
+summary worth quoting.
+
+*Joint Pareto front* over (scaffold, C), via `pareto.dominance_count`: all four
+BRICS points are non-dominated, and only two of four SELFIES points are --
+SELFIES at kl=1.0 and kl=3.0 are both strictly dominated by BRICS at kl=1.0.
+Adding `rdkit_valid` as a third objective does not change the membership.
+
+**Validity is the one axis with uniform dominance.** BRICS is 0.9996-1.0000 flat
+across the whole range; SELFIES is 0.9899-0.9966 and *degrades* as kl rises. Not
+a trade -- BRICS is higher at every setting.
+
+**The cost is fragility.** At kl=0.1 BRICS collapses to 0.511 unique while
+SELFIES holds 0.989, and BRICS needs kl >= 1.0 before duplicates vanish. SELFIES
+is insensitive to the coefficient on that axis across the entire range. If a
+coefficient has to be chosen without a sweep, SELFIES is the safer default and
+BRICS is the one that repays tuning.
 
 ## 4. Retraction: the diversity collapse was a mis-set coefficient
 
@@ -111,8 +170,15 @@ as structural:
 > "The compactness that prevents atom spam is the same property that permits
 > re-emission."
 
-**That explanation was wrong.** Raising the coefficient alone recovers it, paired
-on the same cells:
+**That explanation was mis-scoped rather than simply wrong, and the frontier says
+how.** Re-emission is not an inherent cost of a compact action space -- raising
+the coefficient removes it entirely (0.744 -> 0.982 unique). But it *is* the
+characteristic failure mode of this action space when regularization is
+insufficient, and BRICS is far more sensitive to that than SELFIES: at kl=0.1
+BRICS is at 0.511 unique against SELFIES' 0.989 (section 3a). So compactness
+does not *permit* re-emission as a standing property; it makes re-emission what
+under-regularization looks like here. Raising the coefficient alone recovers it,
+paired on the same cells:
 
 | BRICS kl=1.0 − kl=0.3 | diff | SEM | p |
 |---|---|---|---|
@@ -209,10 +275,17 @@ does not arise at the tuned setting.
   selected it. It reproduced bit-identically (0.8874 both ways, a useful
   determinism check), but it is not independent of the selection; the other
   three cells are new data.
-- **SELFIES was not re-swept.** Its `kl_coef=0.3` comes from the repo's earlier
-  sweep under a different reward and a different acceptance criterion. Strict
-  symmetry would sweep both families under the current reward. If SELFIES also
-  improves at kl=1.0, section 3's comparison moves.
+- **`results/kl_sweep` cannot anchor anything.** The pre-existing SELFIES sweep
+  has no `feature_id` in any cell (so a different classifier, and `run_contract`
+  would refuse those checkpoints) and ran 120 steps against 250. Verified, not
+  assumed. It is a different experiment, not an older criterion, which is why
+  section 3a re-ran the SELFIES frontier from scratch.
+- **Each frontier point is n=1.** No error bars, so a crossing near a knee is not
+  distinguishable from noise -- which is exactly where the two curves interleave.
+  The *shape* claims (SELFIES turning back, BRICS monotone, the 0.835 vs 0.906
+  ceilings) rest on single draws and want replication before they are leaned on.
+- **Only one axis of the sweep was carried to the frontier.** `ent_coef` is held
+  at 0, justified by section 5 but not re-tested per family.
 - **The 2x2 cannot separate its two noise sources** -- one run per cell is zero
   residual df. At kl=0.3: reward-seed effect −0.072, warm-start effect −0.081,
   the same order as each other and as the between-cell spread.
@@ -228,8 +301,16 @@ settled that separately (replacing atom detail with fragment structure
 −0.1161 +/- 0.0107; adding it on top −0.0051 +/- 0.0047, i.e. nothing).
 
 It was validity by construction and an action space that cannot emit atom spam.
-Validity holds (+0.0052 against an arm that already had the size gate), the
-action-space argument is structural, and the diversity objection that appeared to
-count against it was an artifact of a transplanted coefficient. What remains true
-is narrower than the original claim: validity is a ~95.4% untrained floor rather
-than a guarantee, because aromaticity is not covered.
+Validity holds and is the one axis with uniform dominance across the whole
+regularization range (0.9996-1.0000 against 0.9899-0.9966, with SELFIES
+degrading as kl rises). The action-space argument is structural. And the
+diversity objection that appeared to count against it was an artifact of a
+transplanted coefficient.
+
+Two things are narrower than the original claim. Validity is a ~95.4% untrained
+floor rather than a guarantee, because aromaticity is not covered. And BRICS is
+the more hyperparameter-sensitive family: it reaches diversity SELFIES cannot,
+but only after a sweep, and under weak regularization it fails worse. The honest
+summary is not "BRICS is better" or "BRICS matches" but: **the frontiers
+interleave where they overlap, BRICS' extends further, BRICS dominates on
+validity, and BRICS costs a sweep that SELFIES does not.**

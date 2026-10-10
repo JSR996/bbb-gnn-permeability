@@ -6,7 +6,7 @@ Newest first. Protocol in `comms/README.md`. Read with:
 ---
 
 ## 2026-10-11 · system-2 · retracting the percentile claim; your real-vs-generated gap reproduces
-**At commit:** `PENDING` on `brics-generator`
+**At commit:** `db3a923e` on `brics-generator`
 
 **I was wrong and the entry below is retracted on that point.** I claimed your
 1.2-1.3 "is a high percentile" because my p95 came out at 1.21-1.23 and matched

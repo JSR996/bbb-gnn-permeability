@@ -363,59 +363,57 @@ dataset-size pattern as 5.0: the gain appears where data is scarce.
 `models_hybrid` and `models_tox` raise `NotImplementedError` on
 `virtual_node=True`. Runs are under `results/virtual_node/`.
 
-### 5.0c The hierarchical motif model does not work, in two distinct ways **[measured]**
+### 5.0c The motif model fails on READOUT WIDTH, not on fragment structure **[measured]**
 
-Arm 1a. The hypothesis was that permeability is governed by functional groups
-rather than isolated atoms -- a carboxylic acid forbids passive diffusion as a
-unit, and in a flat atom graph that fact is spread over three atoms and diluted
-by message passing. Put the fragment in as a node and the model should see it
-directly. Two versions were built; both are in `src/models_brics.py` behind
-`intra_only` / `fuse`.
+*This entry previously asserted that restricting message passing to
+intra-fragment bonds "deletes exactly the bonds that carry the signal". A 2x2
+was run to check that claim and it is **wrong**. Corrected below; the original
+reasoning is kept only as the thing the data refuted.*
 
-**Version 1 -- fragments REPLACE atom detail.** Level 1 message-passes over
-intra-fragment bonds only, pools per fragment, then a motif GNN runs over the
-BRICS junction graph. BBBP, 10 seeds, paired against the flat base:
+Arm 1a as specified -- atom GNN inside each fragment, pool, motif GNN across
+fragments, molecule vector read out from the motif level -- scores
+**-0.1161 +/- 0.0107** against the flat base on BBBP, 10 paired seeds, all four
+operators significant and in the same direction. That number stands.
 
-| gcn | sage | gin | gat | pooled |
-|---|---|---|---|---|
-| -0.1417 | -0.1108 | -0.1156 | -0.1026 | **-0.1161 +/- 0.0107** |
+The explanation does not. Two things were changed at once when repairing it
+(atom connectivity AND the readout), so the 2x2 was completed. BBBP, 10 seeds,
+pooled over the four operators, paired against the flat base:
 
-All four significant, same direction, about **3x the seed noise**. The reason is
-structural: BRICS cuts amides, esters and aryl-aryl couplings -- the
-pharmacophores -- so restricting level 1 to intra-fragment bonds deletes
-exactly the bonds that carry the signal, and a coarse fragment-to-fragment
-edge does not replace them.
+| atom bonds | motif-only readout | + atom readout |
+|---|---|---|
+| intra-fragment only | **-0.1161 +/- 0.0107** | **+0.0064 +/- 0.0059** |
+| full molecule | -0.1435 +/- 0.0116 | -0.0051 +/- 0.0047 |
 
-**Version 2 -- fragments ADDED on top.** Level 1 runs over the full atom graph
-at the same depth as the flat model, and the motif readout is concatenated at
-the head, so the atom pathway *is* the base model and the head can ignore the
-rest. Strictly additive by construction. 10 seeds, paired, both datasets:
+Main effects: adding the atom-level readout **+0.1304**; restoring full atom
+connectivity **-0.0194**; interaction +0.0159.
 
-| | gcn | sage | gin | gat | pooled |
-|---|---|---|---|---|---|
-| BBBP | -0.0048 | +0.0007 | -0.0062 | -0.0101 | -0.0051 +/- 0.0047 |
-| B3DB | -0.0089 | **-0.0084** | +0.0023 | +0.0020 | -0.0033 +/- 0.0021 |
+**Cross-fragment atom-level message passing contributes nothing.** Restoring it
+is slightly *negative*. The entire penalty came from the readout: a molecule
+squeezed through ~4 pooled fragment vectors loses what a mean+max over ~22
+atoms retains. The structural measurement that seemed to support the old
+explanation -- the atom graph shatters into 3.9 components -- is real but
+irrelevant: each atom still keeps 76% of its 3-hop reach, and the model does
+not need the rest.
 
-Pooled over all 8 cells (n=80): **-0.0042 +/- 0.0026**. One cell is
-significant and it is negative. Cost is 258 s/run against 194 s.
+**The best cell is the one that was never planned.** Intra-fragment bonds with
+both readouts is **+0.0064 +/- 0.0059**, the only positive result here, at 1.1
+SEM. Not a gain -- but it does mean the 12% of bonds BRICS cuts can be deleted
+from atom-level message passing at no measurable cost, provided the readout
+stays wide. Fragment structure is neither the help nor the problem.
 
-**The two together say more than either alone**: the motif view carries no
-information the atom graph does not already have. Removing atom detail is
-catastrophic; adding fragment structure on top is nothing.
+**This fits the night's other results.** Aggregate, whole-molecule information
+helps (virtual node +0.0124, descriptors ~+0.015); long-range atom-level
+connectivity does not (-0.0194); fine-grained atom detail *in the readout* is
+essential (+0.1304). BBB permeability behaves like a property of bulk
+composition rather than of long-range topology.
 
-And it is not that the head ignored the channel -- mean |weight| on the motif
-half of the head is **0.849x** the atom half (range 0.79-0.90 over 12
-checkpoints), so the signal is being used and is simply redundant. Treat that
-ratio as suggestive: weight magnitude is a weak attribution proxy, sensitive to
-input scale and normalization. The accuracy numbers are the result.
-
-**Consequences.** Arm 1c (HRM over the motif graph) is dropped -- it would
-stack an unvalidated architecture on a substrate measured to add nothing. Arm
-1b (downscaled HRM on the atom graph) is independent and still open, though it
-was always the weakest-justified. **For the generator this changes nothing**:
-the case for BRICS there is validity by construction and an action space that
-cannot emit atom spam, which is a property of the action space, not of the
-classifier.
+**Consequences.** Nothing here is a reason to adopt a motif model: the best
+configuration ties the flat baseline at higher cost (258 s/run against 194).
+Arm 1c (HRM over the motif graph) stays dropped -- the motif substrate carries
+no information the atom readout lacks. Arm 1b is independent and still open.
+**For the generator nothing changes**: the case for BRICS there is validity by
+construction and an action space that cannot emit atom spam, which are
+properties of the action space, not of the classifier.
 
 ### 5.1 No dependency pinning or setup script **[measured]**
 This container started with nothing installed, and the PyTorch CDN is blocked

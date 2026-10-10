@@ -111,6 +111,25 @@ forward pass stochastic in train mode. Keep every `eval()` call and keep
 `reward._self_check`'s alone-vs-crowded assertion — it is cheap, and it is what
 catches a regression back to BatchNorm.
 
+**The default is not settled, and you should know before you build on it.**
+LayerNorm costs real accuracy. BatchNorm vs LayerNorm, 10 seeds, paired on seed:
+
+| dataset | gcn | sage | gin | gat |
+|---|---|---|---|---|
+| BBBP | +0.0215 | +0.0459 | +0.0269 | +0.0168 |
+| B3DB | +0.0030 | −0.0018 | +0.0096 | −0.0007 |
+
+Pooled over 80 paired runs, batch − layer = **+0.0152 ± 0.0042 SEM**. BatchNorm
+wins in all four BBBP cells and ties in all four B3DB cells — a small-dataset
+effect, since BBBP trains on 1572 molecules where batch statistics regularize.
+And the hazard above was *already* contained by the `eval()` guards, so
+LayerNorm buys structural immunity rather than fixing a live bug.
+
+`documentation/limitations.md` 5.0 records this as **unresolved**. If it flips,
+the reward checkpoints get retrained and you re-pull — that is the only way it
+reaches you, and `run_contract` makes it loud. Nothing you build on top needs
+to change.
+
 ---
 
 ## 3. `src/brics.py` — the shared substrate
@@ -283,12 +302,37 @@ that sweep needs no session attached.
 
 ---
 
-## 8. Checkpoint status
+## 8. Checkpoint status — the reward ensemble is on a favourable split
 
-The `gin`/`gat`/`gine` bbbp seed-0 checkpoints on this branch are a **smoke
-triple, trained to unblock you**. They are real and correctly trained, but they
-are one seed.
+The 10-seed sweep is **complete** (220 runs). The `gin`/`gat`/`gine` bbbp
+seed-0 checkpoints you score against are real runs under the frozen contract
+(`feature_id=c0c3bbb8`, `norm=layer`, `split=murcko+tanimoto@0.6`), identical in
+configuration to every sweep run. There is no pending swap.
 
-**Never report a number from them.** The 10-seed sweep overwrites them with
-same-architecture results; the swap is a second tag, and the contract guard
-makes a mismatch loud rather than silent.
+**But they are one seed, and seed 0 is the lucky one.** All three sit well
+above their own 10-seed means:
+
+| member | seed 0 | 10-seed mean |
+|---|---|---|
+| gin | 0.8972 | 0.8639 ± 0.0422 |
+| gat | 0.9347 | 0.8877 ± 0.0331 |
+| gine | 0.8971 | 0.8544 ± 0.0520 |
+
+Two consequences for you:
+
+1. **Never quote a seed-0 number as the classifier's accuracy.** The headline
+   figures are the 10-seed means in `results/master_comparison.csv`.
+2. **Your reward is built on the ensemble's best-case split.** `C(m)` is
+   therefore more confident than the model is on average, and the generator
+   optimizes against that confidence. When you see the classifier term
+   saturate, part of it is this, not only reward hacking.
+
+**One seed is structural, not laziness.** The seed reseeds the scaffold split,
+so an ensemble must share a fold or its members have trained on each other's
+held-out molecules — `reward._self_check` asserts the `test_preds.npz` `idx`
+arrays match element-wise. If you want a less favourable reward, use a
+different single seed (`load_frozen_classifier(seed=...)`), not a mixture.
+
+**If the norm default flips** (see §2 and `documentation/limitations.md` 5.0),
+these three get retrained and you re-pull. `run_contract` replays whichever
+norm a checkpoint recorded, so nothing breaks silently either way.

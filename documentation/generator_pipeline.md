@@ -147,9 +147,9 @@ distinction decides where it matters:
 | mean `C` per seed, one group of 64 | 0.690 - 0.796 |
 | rank agreement across seeds (Spearman) | rho = 0.82 - 0.89, 45 pairs |
 | after within-group z-scoring | r = 0.86 - 0.93 |
-| per-molecule \|z difference\| p95, generated | 1.21 |
-| per-molecule \|z difference\| p95, real BBBP | 0.89 +/- 0.12 (30 draws) |
-| ratio, generated / real | 1.39x (1.03 - 1.89), 30/30 draws |
+| seed agreement r, real BBBP | 0.922 +/- 0.020 (15 draws) |
+| seed agreement r, generated | 0.872 +/- 0.091 (12 samples) |
+| p95 \|z difference\|, real / generated | 0.873 / 1.122 |
 
 **`group_advantages` standardizes within the group, so the absolute level is
 divided out before it reaches the policy.** The seeds largely agree on *ranking*,
@@ -164,28 +164,43 @@ the seed is recorded with the candidate set rather than merely noted.
 
 Not zero for training either, and it is **worse on the molecules being
 optimized than on real ones**. At matched n=64 over all 45 seed-pairs, the ten
-seeds agree at r = 0.931 on real BBBP molecules against r = 0.859 on generated
-ones. The classifiers only ever saw real molecules, so the population the
-generator drives toward is the population its reward is least reliable on. That
-also gives a second mechanism for the warm-start-to-trained agreement drop
-(r 0.925 -> 0.859) besides `C` saturating: a trained policy is further
-off-distribution for the judge. The two are not separable from these runs.
+seeds agree at r = 0.922 +/- 0.020 on real BBBP molecules against
+r = 0.872 +/- 0.091 on generated ones (15 draws and 12 samples respectively --
+single-sample figures on either side are not meaningful, see below).
+The classifiers only ever saw real molecules, so the population the generator
+drives toward is plausibly the population its reward is least reliable on. A
+second mechanism points the same way and is not separable from these runs: a
+trained policy is further off-distribution for the judge, and `C` has also
+saturated by then, leaving less spread for the seeds to agree about.
 
-**Quote the ratio from 45 seed-pairs, not 3, and give its range.** The real-pool
-baseline is the noisy half, not the generated half, so the ratio inherits the
-control's instability. Bootstrapped over 30 random BBBP draws at n=64, against
-one fixed generated sample:
+**This is directionally supported, NOT established, and must not be quoted with
+a confidence interval that excludes 1.** Getting here took three wrong turns
+worth recording, because the error is easy to repeat.
 
-| seed-pairs | real p95 | ratio gen/real | draws where gen > real |
+Varying *both* pools — 12 generated samples (3 runs x steps 200/220/240/249)
+against 15 random BBBP draws, n=64, all 45 seed-pairs:
+
+| statistic | real | generated | direction holds |
 |---|---|---|---|
-| 3 | 0.91 +/- 0.20 | 1.26x (0.75 - 1.64) | 26/30 |
-| **45** | 0.89 +/- 0.12 | **1.39x (1.03 - 1.89)** | **30/30** |
+| p95 \|z difference\| | 0.873 +/- 0.124 | 1.122 +/- 0.341 | 149/180 = **83%** |
+| post-standardization r | 0.922 +/- 0.020 | 0.872 +/- 0.091 | 142/180 = **79%** |
 
-At 3 pairs the direction fails in 4 of 30 draws, which is why two independent
-3-pair measurements of this gap landed at 1.05x and 1.52x — both inside that
-range. At 45 pairs the control tightens and the direction is unanimous. The
-instability was an artefact of too few seed-pairs rather than a property of the
-effect, so the effect size is quotable at 45 pairs and is not at 3.
+The two-sided p95 ratio is **1.31x with a 95% range of 0.63 - 2.48**, which
+spans 1. One generated sample (`rs1_ws0` step 200, p95 0.597) sits *below* the
+real-pool mean and reverses the direction outright.
+
+**The generated side is the noisy half — 2.8x the sd of the real side on p95,
+4.5x on r** — which is the opposite of what both halves of this project assumed.
+An earlier version of this section reported 30/30 unanimity and a 1.03 - 1.89
+interval; that came from resampling the real pool 30 times while holding **one**
+generated sample fixed, and that sample happened to sit above the generated mean.
+Fixing the noisier axis manufactures the unanimity.
+
+The lesson generalizes past this number: **resample every axis you are not
+deliberately conditioning on**, and do not identify the noisy axis by eye from
+two draws — measure it. The point estimate survived all three versions (1.39x ->
+1.37x -> 1.31x); only the interval moved, and the interval was the part being
+quoted.
 
 **Quote the 95th percentile with its n and its pair count; do not compare pools
 on the max.** `max |z difference|` is an extreme-value statistic that grows with

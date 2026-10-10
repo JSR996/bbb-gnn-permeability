@@ -79,7 +79,7 @@ goes blind to exactly the change it exists to catch.
 ```
 NODE_DIM = 39      EDGE_DIM = 7      FEATURE_ID = c0c3bbb8
 hidden = 128       num_layers = 3    dropout = 0.3     heads = 4
-norm = "layer"     virtual_node = False
+norm = "graph"     virtual_node = False
 split = "murcko+tanimoto@0.6"
 reward ensemble = ("gin", "gat", "gine") on bbbp, seed 0
 ```
@@ -111,8 +111,8 @@ forward pass stochastic in train mode. Keep every `eval()` call and keep
 `reward._self_check`'s alone-vs-crowded assertion — it is cheap, and it is what
 catches a regression back to BatchNorm.
 
-**The default is not settled, and you should know before you build on it.**
-LayerNorm costs real accuracy. BatchNorm vs LayerNorm, 10 seeds, paired on seed:
+**The default is now GraphNorm** (was LayerNorm), still batch-independent.
+BatchNorm costs are unchanged and it remains the higher scorer. BatchNorm vs LayerNorm, 10 seeds, paired on seed:
 
 | dataset | gcn | sage | gin | gat |
 |---|---|---|---|---|

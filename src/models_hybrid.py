@@ -35,7 +35,7 @@ class HybridGNNClassifier(nn.Module):
         dropout: float = 0.3,
         heads: int = 4,
         descriptor_dim: int = DESCRIPTOR_DIM,
-        norm: str = "layer",
+        norm: str = "graph",
         virtual_node: bool = False,
     ) -> None:
         super().__init__()

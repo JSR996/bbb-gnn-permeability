@@ -60,7 +60,7 @@ def train_one(
     num_layers: int = 3,
     dropout: float = 0.3,
     heads: int = 4,
-    norm: str = "layer",
+    norm: str = "graph",
     virtual_node: bool = False,
     cluster_acyclic: bool = True,
     device: str = "cpu",
@@ -223,7 +223,7 @@ def main() -> None:
     p.add_argument("--num-layers", type=int, default=3)
     p.add_argument("--dropout", type=float, default=0.3)
     p.add_argument("--heads", type=int, default=4)
-    p.add_argument("--norm", choices=NORMS, default="layer",
+    p.add_argument("--norm", choices=NORMS, default="graph",
                    help="layer (default) is batch-independent; batch reproduces "
                         "the pre-contract runs")
     p.add_argument("--virtual-node", action="store_true",

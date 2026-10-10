@@ -88,7 +88,7 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--patience", type=int, default=30)
     p.add_argument("--device", default="cpu")
-    p.add_argument("--norm", default="layer")
+    p.add_argument("--norm", default="graph")
     p.add_argument("--virtual-node", action="store_true")
     p.add_argument("--force", action="store_true",
                    help="retrain runs that already have a metrics.json")

@@ -274,14 +274,14 @@ reports the survivor spread and withholds the recommendation below sd 0.02.
 
 ## 5. Engineering
 
-### 5.0 LayerNorm is the default and it costs accuracy on BBBP **[measured]**
+### 5.0 GraphNorm is the default; BatchNorm still scores higher **[measured]**
 
 `BatchNorm1d` makes a molecule's logit a function of what shares its batch.
 That is a training detail for a classifier and a correctness problem for a
 frozen reward: under BatchNorm in train mode the same molecule earns a
 different reward depending on which candidates land in its GRPO group, so the
-reward stops being a function of the molecule. The default moved to LayerNorm,
-which is batch-independent by construction. Measured by `python -m src.models`,
+reward stops being a function of the molecule. The default moved to **GraphNorm**, which
+normalizes per molecule and is batch-independent by construction. Measured by `python -m src.models`,
 gin on a 4-graph batch in train mode: batch drifts **3.97e-02**, layer 3.7e-09,
 graph 6.0e-08.
 
@@ -302,6 +302,15 @@ on B3DB in all four. That pattern is a **small-dataset effect**: BBBP trains on
 not matter. Runs are under `results/norm_arm_batch/`; GraphNorm was also tried
 and is tied with LayerNorm (+0.0072 +/- 0.0108 on bbbp/gcn), so it does not
 recover the gap.
+
+**Why GraphNorm rather than LayerNorm.** Both were the options on the table and
+both are batch-independent; GraphNorm measured higher in all four BBBP cells and
+~zero in all four B3DB cells, pooled **+0.0077 +/- 0.0043 SEM** over 80 paired
+runs. That is 1.8 SEM and does **not** clear 95%, so the switch rests on sign
+consistency plus the prior that per-graph normalization suits variable-size
+molecules -- not on a proven difference. GraphNorm recovers roughly half the gap
+to BatchNorm (pooled over the same 8 cells: batch 0.8959, graph 0.8885,
+layer 0.8807). LayerNorm runs are archived under `results_layernorm/`.
 
 **The honest counterargument against the current default.** The
 batch-dependence hazard was *already* contained by the `eval()` calls in

@@ -76,7 +76,7 @@ def train_hybrid_one(
     num_layers: int = 3,
     dropout: float = 0.3,
     heads: int = 4,
-    norm: str = "layer",
+    norm: str = "graph",
     cluster_acyclic: bool = True,
     device: str = "cpu",
     out_dir: Path | None = None,

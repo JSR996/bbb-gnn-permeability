@@ -40,7 +40,7 @@ class MultiTaskGNN(nn.Module):
         dropout: float = 0.3,
         heads: int = 4,
         n_tasks: int = len(TOX21_TASKS),
-        norm: str = "layer",
+        norm: str = "graph",
         virtual_node: bool = False,
     ) -> None:
         super().__init__()

@@ -80,7 +80,7 @@ class GNNClassifier(nn.Module):
         num_layers: int = 3,
         dropout: float = 0.3,
         heads: int = 4,
-        norm: str = "layer",
+        norm: str = "graph",
         virtual_node: bool = False,
     ) -> None:
         super().__init__()

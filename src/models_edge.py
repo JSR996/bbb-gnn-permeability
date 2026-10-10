@@ -85,7 +85,7 @@ class EdgeGNNClassifier(nn.Module):
         dropout: float = 0.3,
         heads: int = 4,
         edge_dim: int = EDGE_DIM,
-        norm: str = "layer",
+        norm: str = "graph",
         virtual_node: bool = False,
     ) -> None:
         super().__init__()

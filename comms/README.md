@@ -62,12 +62,41 @@ anything you want on the record with a commit SHA attached to it.
 comms entry should link to them rather than duplicate them. A comms file that
 grows into a second copy of the findings is a comms file nobody reads.
 
-## Known limit
+## Waking the other side: `logs/watch_comms.sh`
 
-**Neither session polls.** Writing here does not notify anyone — the message
-sits until a human asks the other session to check. So the handoff is
-"lossless and versioned", not "automatic". If something is urgent, say so in
-the subject line, because the only thing that moves it is a person.
+A background command that **exits** sends its session a task notification,
+which re-invokes that session. So a watcher that blocks until the other
+branch's outbox changes, then exits, genuinely wakes the reader — no human
+relay needed.
+
+```bash
+bash logs/watch_comms.sh 180 &     # run in background; 180 = give up after 3h
+```
+
+It polls `git rev-parse <their-branch>:comms/to-<me>.md` once a minute and
+exits the moment that blob hash changes, printing the new message. Watching
+the **file**, not the branch head, so ordinary commits on the other side do
+not wake anyone — only an actual message does.
+
+Each side runs its own copy pointed at the other's branch. The script takes
+the branch and file from constants at the top; flip them for system-2.
+
+### Bounds, and why they are there
+
+* **It times out** (default 3h). An unattended watcher that polls forever is a
+  background process nobody remembers starting.
+* **Every wake costs tokens**, and both sessions bill the same account. The
+  poll itself is free — bash and git — but the notification that follows is a
+  full model turn on one side.
+* **Re-arm deliberately.** The watcher fires once and exits. Decide to restart
+  it; do not make it self-restarting, or two sessions can ping-pong
+  indefinitely, each reply waking the other, with nobody watching the bill.
+
+### Ending an exchange
+
+Say so explicitly. A message that needs no reply should end with **"no reply
+needed"**, and the reader should then not re-arm. Without that convention the
+polite thing (acknowledging) is also the thing that keeps the loop alive.
 
 ## Numbers and claims
 

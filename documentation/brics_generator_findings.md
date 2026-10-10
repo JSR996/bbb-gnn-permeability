@@ -10,12 +10,13 @@ dominates on validity at every setting. The cost is sensitivity: BRICS needs
 kl_coef >= 1.0 to avoid collapsing to duplicates, where SELFIES holds 0.99
 unique across the whole range.**
 
-**And the off-instrument checks reverse the confidence axis (section 3b).** Every
-BRICS point's instrument gap `C(BBBP) - C(B3DB)` brackets the real-drug reference
-of +0.037; every SELFIES point is 1.6x to 2.7x it, with no overlap across 8
-points. D_real agrees: BRICS 0.931-0.947 against real drugs' 0.940, SELFIES
-0.710-0.800. So BRICS' lower `c_mean` is honesty rather than weakness, and the
-"BRICS pays confidence for validity" framing in section 3 is wrong.
+**And the instrument gap reverses the confidence axis (section 3b).** Every BRICS
+point's `C(BBBP) - C(B3DB)` brackets the real-drug reference of +0.037; every
+SELFIES point is 1.6x to 2.7x it, with no overlap across 8 points. So BRICS'
+lower `c_mean` is honesty rather than weakness, and the "BRICS pays confidence
+for validity" framing in section 3 is wrong. (`D_real` appears to agree and is
+discarded: its discriminator was trained against SELFIES specifically, so it
+cannot rank two families. Section 3b.)
 
 A single matched-`kl_coef` comparison cannot say this, and an earlier version of
 this document tried to. `kl_coef` is not commensurable across these action spaces
@@ -199,11 +200,29 @@ across 8 points -- max BRICS 0.042 < min SELFIES 0.060. SELFIES' higher
 confidence is substantially the selector's blind spot being exploited, not better
 molecules, which is exactly the failure the check exists to catch.
 
-**D_real says the same thing louder.** BRICS scores 0.931-0.947 against real
-drugs' 0.940 -- its molecules are as real-looking as approved drugs to a
-discriminator neither family trained against. SELFIES sits at 0.710-0.800,
-matching the long-standing "generator 0.80 vs real 0.94" note in
-`aggregate_arms`. BRICS closes the realism gap that observation describes.
+**D_real is confounded and is NOT usable here.** The numbers above (BRICS
+0.931-0.947, SELFIES 0.710-0.800, real drugs 0.940) look like BRICS closing the
+"generator 0.80 vs real 0.94" realism gap. They are not evidence of that.
+`results/gan/seed0/config.json` has `feature_id` ABSENT, no `generator` key and
+`kl_coef=0.02`: that discriminator predates the `--generator` flag, so it was
+trained adversarially against a **SELFIES** generator specifically, under the
+retired classifier, at the hacked coefficient. It therefore learned one
+generator's artifacts. BRICS scoring high may only mean it lacks SELFIES
+artifacts, and SELFIES scoring low is a detector marking the family it was built
+against.
+
+That is the same asymmetric-instrument error as transplanting `kl_coef`
+(section 4), pointing the other way: a judge calibrated on one family cannot
+rank two. A cross-family realism claim needs one discriminator trained on real
+against a **mixture of both** families, which is a separate experiment and is not
+run here.
+
+**The instrument gap does not share the flaw.** `C(BBBP)` and `C(B3DB)` are
+contract-era classifiers with no adversarial history against either generator --
+both only ever saw real molecules, so neither family is in-domain for the judge.
+System-1 recomputed the reference independently over 1560 real BBB+ drugs under
+the current ensembles and got **+0.0373** against the +0.037 here. Section 3b's
+reversal of the C axis therefore stands on the gap alone.
 
 So at matched diversity BRICS' lower `c_mean` is **honesty, not weakness**, and
 `BRICS@kl=1.0` is the most real-drug-like point measured on either curve (gap
@@ -363,6 +382,9 @@ does not arise at the tuned setting.
   stronger, but at n=55-59 those cannot support per-arm means.
 - **Section 3b is n=1 per point.** The families not overlapping across all 8
   points is the real signal; no individual gap difference has an error bar.
+- **No realism claim is made.** `D_real` is discarded as confounded, and the
+  experiment that would support one -- a discriminator trained on real against a
+  mixture of both families -- has not been run.
 - **The 2x2 cannot separate its two noise sources** -- one run per cell is zero
   residual df. At kl=0.3: reward-seed effect −0.072, warm-start effect −0.081,
   the same order as each other and as the between-cell spread.
@@ -385,10 +407,11 @@ diversity objection that appeared to count against it was an artifact of a
 transplanted coefficient.
 
 It also turns out to buy something nobody claimed for it: BRICS is markedly
-harder on the instrument. Its gap to an unseen judge tracks real drugs at every
-coefficient and its molecules are as real-looking as approved drugs to a fixed
-discriminator (section 3b). That was not part of the case for BRICS and is the
-strongest result in this report.
+harder on the instrument. Its gap to an unused judge tracks real drugs at every
+coefficient tested (section 3b). That was not part of the case for BRICS and is
+the strongest result in this report. The realism half of that claim is NOT
+supported -- `D_real`'s discriminator was built against SELFIES and cannot rank
+two families.
 
 Two things are narrower than the original claim. Validity is a ~95.4% untrained
 floor rather than a guarantee, because aromaticity is not covered. And BRICS is

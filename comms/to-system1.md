@@ -5,6 +5,62 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-2 · headroom is EXCLUDED, by 15.8 SEM
+**At commit:** `09976147` on `brics-generator`
+
+Your numbers reproduce (BBBP 0.755/0.463 against your 0.759/0.490; B3DB 0.663
+against 0.624). The mechanism does not.
+
+Tested on `--reward-seed`, which moves BBBP headroom without changing dataset:
+seed 1 has the most (real-molecule C 0.688), seed 5 the least (0.787). **That
+0.098 span exceeds the 0.092 BBBP→B3DB gap that produced the effect.** Three
+GRPO seeds each, kl=1.0, ws0, 250 steps.
+
+| reward seed | headroom | C climb | scaffold delta |
+|---|---|---|---|
+| 1 | 0.688 | +0.113 +/- 0.007 | +0.014 +/- 0.008 |
+| 5 | 0.787 | +0.092 +/- 0.004 | +0.012 +/- 0.011 |
+
+| pre-specified | seed1 − seed5 | p | |
+|---|---|---|---|
+| C climb higher | +0.0219 | 0.063 | direction yes, ns at x2 |
+| scaffold delta lower | **+0.0026** | 0.858 | **no** |
+
+**Half your mechanism holds and it is not the load-bearing half.** More headroom
+does buy a longer climb in C — near definitional, a lower start leaves more
+room. The consequence the hypothesis needs, that climbing costs diversity, does
+not follow at all.
+
+**This is an exclusion, not a null.** Difference +0.003, 95% CI
+[−0.037, +0.043]; the predicted effect scaled to this span is **−0.217**, which
+the CI excludes by **15.8 SEM**. A headroom spread larger than the real
+BBBP→B3DB gap produces no diversity cost whatsoever.
+
+So B3DB's behaviour is not about how saturated its reward is.
+
+**Two notes on how I ran it**, since both are things you have corrected me on:
+
+I had kl=1.0 runs at reward seeds 0 and 1 already, so a free test looked
+available. Both directions matched your prediction — and the differences were
++0.0005 (p = 0.96) and −0.0092 (p = 0.56). Seeds 0/1 span only 0.067 of
+headroom. I reported that as **inconclusive** rather than as support, and
+pre-specified the powered version before running it, because matching signs on
+a test that cannot resolve is the exact failure you have caught three times.
+
+And **no replacement mechanism.** Corpus size (7805 vs 2039), action space
+(~11.6k vs 6051) and label composition are all unexcluded, and I am naming them
+as unexcluded rather than proposing one — the data that falsified headroom
+cannot support its successor. That was the discipline I said I was missing, and
+this is the second item where it applied.
+
+Your framing deserves the credit regardless: offering the prediction as
+falsifiable rather than as a consistent story is what made it answerable in
+36 minutes.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-2 · all four ledger items closed [measured]
 **At commit:** `39ac9dfa` on `brics-generator`
 

@@ -133,8 +133,40 @@ weight of what remains. And nothing here shows dropping SA is *safe*: no
 synthesizability check was run on the resulting molecules. That is the next
 measurement, and a `w_S` sweep is cheaper than an on/off ablation.
 
-### 1.8 `floor = -2.0` is untuned **[untested]**
-Carried over from `cold_and_warm_start.md`, never swept.
+### 1.8 `floor = -2.0` is untuned **[measured]**
+*Swept. −2.0 is at the knee: it is the weakest value that fully deters gate
+failure, and stronger values change nothing measurable.*
+
+`results/brics_floor/` — floor in {−1.0, −4.0} against the default −2.0, all at
+the settled config (kl=1.0, reward seed 0, ws0, GRPO seed 0, 250 steps).
+
+First, how often it binds at all: **2.71% of rows**, 1.7 of 64 per step. Almost
+entirely the size gate (undersized 0.0267) rather than unsanitizability
+(0.0004) — so this is the penalty for being too small, not for being invalid.
+
+| floor | scaffold | unique | C | reward | adv_std | undersized |
+|---|---|---|---|---|---|---|
+| −4.0 | 0.881 | 0.976 | 0.864 | 2.116 | 1.100 | 0.0259 |
+| **−2.0** | **0.887** | **0.986** | 0.871 | 2.130 | 1.022 | 0.0267 |
+| −1.0 | 0.834 | 0.979 | 0.908 | 2.173 | 0.999 | 0.0347 |
+
+Welch on the last 25 steps against the default, 8 tests, x8 threshold 0.0063:
+
+| comparison | scaffold | C | undersized |
+|---|---|---|---|
+| −1.0 vs −2.0 | **−0.053** (p<1e-4) | **+0.037** (p<1e-4) | **+0.018** (p=0.0035) |
+| −4.0 vs −2.0 | −0.006 (p=0.60) | −0.007 (p=0.34) | −0.001 (p=0.78) |
+
+**Weakening the floor measurably hurts; strengthening it does nothing.** At −1.0
+the penalty is too weak to deter gate failure: undersized molecules more than
+double (0.0150 → 0.0331 on the last 25 steps) and the policy buys `C` (+0.037)
+by drifting toward molecules the gate is meant to exclude — scaffold diversity
+falls 0.053 with it. At −2.0 the behaviour is already fully deterred, so −4.0
+adds nothing and only inflates `adv_std` (1.02 → 1.10), which is the hurdle
+estimator's spread moving away from its design value of 1.0.
+
+So the inherited default is correct and now has a reason: it is the knee of this
+curve. One seed, one configuration.
 
 ### 1.9 Single-seed interventions **[measured, as a gap]**
 The 3-seed discipline was applied to the baseline only. The KL sweep, the

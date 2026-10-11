@@ -89,6 +89,14 @@ self-check asserts exactness, so a regression in either is loud.
 
 ## 3. Reproducing from a clean clone
 
+> **This section reproduces the generation half only, and it assumes a trained
+> classifier.** The commands below go straight to `python -m src.reward`, which
+> works solely because the three ensemble checkpoints are committed — on a clone
+> with an untrained or retrained classifier it builds a reward from whatever is
+> at those paths. For the whole pipeline with that seam closed, and for the
+> ten-policy-seed configuration that supersedes the three-seed figures above,
+> see `documentation/full_pipeline.md` or run `python -m src.pipeline --list`.
+
 ```bash
 git clone <repo> && cd bbb-gnn-permeability
 python -m venv .venv && source .venv/bin/activate

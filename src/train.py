@@ -224,8 +224,9 @@ def main() -> None:
     p.add_argument("--dropout", type=float, default=0.3)
     p.add_argument("--heads", type=int, default=4)
     p.add_argument("--norm", choices=NORMS, default="graph",
-                   help="layer (default) is batch-independent; batch reproduces "
-                        "the pre-contract runs")
+                   help="graph (default) and layer are batch-independent, which "
+                        "a frozen reward requires; batch scores higher but makes "
+                        "C(m) depend on the group a molecule is scored in")
     p.add_argument("--virtual-node", action="store_true",
                    help="per-graph state injected between layers, so an atom's "
                         "receptive field is not capped at num_layers hops")

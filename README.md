@@ -135,6 +135,9 @@ Raw datasets live in `data/raw/` and are read from there by every module.
 | `paired_analysis.py` | paired-seed architecture comparison |
 | `collect_all.py` | merge every result table into `results/master_comparison.csv` |
 | `reward.py`, `grpo.py`, `generator.py`, `train_gan.py` | molecule generation (GRPO) |
+| `brics_assembly.py`, `brics_generator.py` | the settled generator: fragment assembly, valid by construction |
+| `postfilter.py` | screen and rank generated molecules into a candidate set |
+| `pipeline.py` | runs every stage above in order, resumable |
 | `diversity.py`, `analyze_drift.py` | scaffold / Tanimoto / descriptor-drift diagnostics |
 | `classifier_ood.py`, `mc_dropout.py`, `kl_sweep.py` | is the reward trustworthy, and can KL hold back the collapse? |
 
@@ -156,7 +159,8 @@ python -m src.ensemble                     # combine predictions (within seed)
 
 # --- extensions ---
 python -m src.train_edge --run-all         # 60 runs: gine / gat_edge / sage_edge
-python -m src.train_hybrid --run-all       # 80 runs
+python -m src.train_hybrid --run-all       # 80 runs, GraphNorm
+python -m src.train_hybrid --run-all --norm batch   # 80 runs -> results/hybrid_batch
 python baselines/descriptor_baseline_v2.py # LightGBM baseline (no torch needed)
 
 # --- external evaluation + aggregation ---
@@ -165,13 +169,26 @@ python -m src.eval_external_holdout        # score all checkpoints on them
 python -m src.paired_analysis --all-sources
 python -m src.collect_all                  # -> results/master_comparison.csv
 
-# --- generation ---
-python -m src.generator --pretrain         # MLE warm start (~1 min on CPU)
-python -m src.train_gan --steps 200        # GRPO
-python -m src.reward && python -m src.grpo # self-checks
+# --- the whole pipeline, resumable (see documentation/full_pipeline.md) ---
+python -m src.pipeline --list              # what would run, what would skip
+python -m src.pipeline                     # classifier -> reward -> generator -> screen
+
+# --- generation, by hand ---
+python -m src.reward && python -m src.grpo # self-checks; reward is the gate
+python -m src.brics_generator --pretrain   # MLE warm start (~9 min, NOT optional)
+python -m src.train_gan --generator brics --steps 250 --threads 6 \
+    --seed 0 --reward-seed 0 --kl-coef 1.0 \
+    --warm-start results/generator/bbbp_brics_pretrained.pt \
+    --out-dir results/brics_kl1/rs0_ws0
+python -m src.postfilter results/brics_kl1/* --from-step 150 \
+    --out results/candidates/brics10
 
 jupyter lab notebooks/results.ipynb
 ```
+
+`--kl-coef 1.0` is mandatory for the BRICS generator. The repo default of 0.3
+was validated for the SELFIES action space and does not transfer — at 0.3 BRICS
+collapses to scaffold diversity 0.643 with 26% duplicates per group.
 
 Runs default to CPU — these graphs are small enough that MPS kernel-launch
 overhead makes it slower. `--device mps` is available to test that.
@@ -243,17 +260,26 @@ generator -> SMILES -> RDKit sanitization -> frozen classifier ensemble
                                           -> discriminator     } -> R(m) -> advantage -> clipped update
 ```
 
+**The settled generator is BRICS fragment assembly, not SELFIES.** It is valid
+by construction, and `src/brics_generator.py` supersedes `src/generator.py` for
+anything new; the SELFIES generator is kept because the frontier comparison
+cites it.
+
 ```bash
-python -m src.generator --pretrain     # MLE warm start on real molecules
-python -m src.train_gan --steps 200    # GRPO
+python -m src.pipeline                 # the whole thing, resumable
 ```
 
 Each module runs its own self-check with no arguments (`python -m src.grpo`).
 
-From a fresh clone those two commands are the whole cold start — the classifier
-checkpoints the reward depends on are committed under `results/`, so nothing in
-the scoring half needs retraining. On CPU the warm start is ~1 min and GRPO
-~0.7 s/step at group 32.
+The classifier checkpoints the reward depends on are committed under
+`results/`, as are the MLE warm start and policy seeds 0-2, so a default
+pipeline run trains only the seven remaining policy seeds (~42 min). On CPU
+BRICS GRPO is ~1.46 s/step at group 64, so 250 steps is ~6 min.
+
+**If you retrain the classifier, nothing re-points the reward** — it reads
+whatever is at those checkpoint paths. `python -m src.reward` is the gate that
+catches a mismatch, and `python -m src.pipeline` runs it before any generator
+work.
 
 Reward (Eq. 5) is a weighted sum of four terms: the discriminator score, the
 frozen permeability classifier, QED, and a synthesizability score. `assemble()`
@@ -456,6 +482,11 @@ duplicate copies disagree on the label are dropped entirely rather than guessed.
 
 | file | contents |
 |---|---|
+| **`full_pipeline.md`** | **the whole recipe end to end — start here** |
+| `pipeline.md` | the classifier half, and the evidence for every part of it |
+| `generator_pipeline.md` | the generation half, at the three-seed configuration |
+| `brics_generator_findings.md` | what was learned building the BRICS generator |
+| `limitations.md` | every known failure, measured, including the retractions |
 | `reward_hacking_investigation.md` | how the collapse was found, measured and diagnosed |
 | `cold_and_warm_start.md` | why the generator uses an MLE warm start and a two-part advantage |
 | `open_items.pdf` / `.tex` | formalization of the open items |

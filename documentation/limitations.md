@@ -175,6 +175,24 @@ raw-vs-logit A/B and the Tox21 probe are all **seed 0 alone**. Given that seed
 vs 0.75/0.73 at step 90), every intervention result should be treated as
 provisional until replicated.
 
+**The settled point varies three axes, not one, and they are unevenly
+sampled.** Read from the committed `config.json` of each run dir:
+
+| axis | flag | levels |
+|---|---|---|
+| policy seed | `--seed` | 0 (`rs0_ws0`), 1 (`gseed1`), 2 (`gseed2`) |
+| reward seed | `--reward-seed` | 0 (`rs0_*`), 1 (`rs1_*`) |
+| warm start | `--warm-start` | `bbbp_brics_pretrained.pt` (`*_ws0`), `bbbp_brics_mle_s1.pt` (`*_ws1`) |
+
+Two things follow. The scaffold headline is a **policy-seed** mean at n=3, not
+a pooled figure over all six dirs. And `postfilter rs0_ws0 rs0_ws1` — which
+produced `results/candidates/brics/` — pools the two *warm starts at policy
+seed 0*, so `gseed1` and `gseed2` contribute no candidates at all. The
+directory names are also two incompatible conventions, and `rs0_ws0`/`rs0_ws1`
+have identical `seed` and `reward_seed`: **never infer an axis from a run
+directory's name.** `results/candidates/brics10/` is the ten-policy-seed screen
+and supersedes it for yield; see `documentation/full_pipeline.md`.
+
 ### 1.10 Runs are short, and no long run has been validated **[measured]**
 *1000 steps at the settled config. No sustained decay. Validity holds at
 0.9998. The settled point is stable over 5x the previous horizon.*
@@ -374,6 +392,10 @@ ECE 0.0944, but bins hold 4-7 molecules each and the sign of the gap flips
 between adjacent bins. n=55 does not support a reliability diagram; the
 headline ECE is reportable and its shape is not.
 
+---
+
+## 3. The data
+
 ### 3.1 BBBP labels transport, not drug-likeness or safety **[measured]**
 This is the root cause of §1.2. Chloroform, dichloromethane, bromoform,
 nitrous oxide, cyclopropane, ethanol and vinyl ether are all in BBBP labelled
@@ -429,16 +451,39 @@ organ/acute endpoint (LD50, DILI). Neither has been obtained or tested.
 
 ## 4. Statistics and measurement
 
-### 4.1 Three seeds, and nothing separates **[measured]**
-0/6 base-GNN pairs separate at 95% on either dataset. Pairing helps
-substantially (median paired sd 0.40× the marginal on BBBP; `gat − gin` is a
-1.4 sd effect) but is not sufficient. The 10-seed study has not been run.
+### 4.1 Ten seeds, and operator choice still barely separates **[measured]**
+The 10-seed study has now been run. It does not rescue operator selection.
+Paired 95% CIs over 10 common seeds, per family × dataset:
 
-### 4.2 The paired standard deviations are themselves unreliable **[measured]**
-At n=3 the paired sd carries **2 degrees of freedom**, so `dz` and the implied
-seeds-to-significance are noisy. `hybrid:gcn − hybrid:gin` shows dz = −14.9
+| family / dataset | pairs separating | the ones that do |
+|---|---|---|
+| base / bbbp | **0/6** | — |
+| base / b3db | 1/6 | `gin − sage` −0.0096 |
+| hybrid_batch / bbbp | 2/6 | `gcn − gin` +0.0201, `gin − sage` −0.0149 |
+| hybrid_batch / b3db | 1/6 | `gat − gin` −0.0045 |
+
+**4 of 24 pairs**, and every surviving effect is between 0.004 and 0.02 AUC.
+Two consequences:
+
+- The 3-seed claim that `gat − gin` was a 1.4 sd effect on BBBP **did not
+  replicate**: at 10 seeds it is +0.0109 with CI [−0.0057, +0.0275].
+- What separates is not stable across datasets. `gin − sage` separates on both
+  b3db/base and bbbp/hybrid_batch, but with opposite sign relative to the other
+  pairs' ordering, and `gcn − gin` separates only in one cell of four.
+
+More seeds narrowed the intervals as expected; the gaps between operators are
+simply smaller than that. Operator choice is not where the performance is —
+descriptors and the norm are (§5.0e), and those were the only two interventions
+that ever cleared significance.
+
+### 4.2 The paired standard deviations were unreliable at n=3 **[measured]**
+At n=3 the paired sd carried **2 degrees of freedom**, so `dz` and the implied
+seeds-to-significance were noisy. `hybrid:gcn − hybrid:gin` showed dz = −14.9
 from three consistent differences amounting to **0.16% AUC** — statistically
-separable, practically irrelevant.
+separable, practically irrelevant. At 10 seeds that pair is +0.0201 with CI
+[+0.0066, +0.0335]: still separating, still practically small, but no longer a
+2-df artefact. The lesson stands as a method rule rather than a live defect —
+see the generator's three axes in §1.9, which are still at n=2–3.
 
 ### 4.3 Structural diversity metrics are sample-size dependent **[measured]**
 Scaffold fraction reads 0.758 at n=199 and 0.595 at n=982 on the same BBBP.

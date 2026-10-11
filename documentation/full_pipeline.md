@@ -1,0 +1,401 @@
+# The complete pipeline
+
+One recipe, end to end: train the classifier, freeze it as a reward, train the
+generator against it, screen the output. `src/pipeline.py` runs all of it.
+
+This supersedes the "Reproducing" sections of `documentation/pipeline.md` (§6)
+and `documentation/generator_pipeline.md` (§3), which each described one half as
+if it were the whole. Those documents remain the detailed evidence for their
+halves; this one is the recipe and the seam between them.
+
+```
+python -m src.pipeline --list      # what would run, what would skip
+python -m src.pipeline             # everything, resuming
+python -m src.pipeline --only reward
+python -m src.pipeline --from generator
+```
+
+---
+
+## 1. What this produces, and what it does not
+
+**Produces:** a BBB-permeability classifier (BBBP 0.921 in-distribution, 0.850
+on novel chemistry), and a set of generated molecules screened to ~1700–5000
+survivors ranked by predicted permeability.
+
+**Does not produce synthesis candidates.** Every survivor is a hypothesis.
+`C` is a classifier trained on BBBP, which labels a *transport* property —
+nothing in the label says "drug" and nothing says "safe". Optimizing it once
+converged on carbon tetrachloride and freon-12 and scored them above caffeine.
+The size gate and `kl_coef=1.0` contain that failure mode; they do not remove
+the objective that causes it. See §9.
+
+---
+
+## 2. Quick start
+
+The warm start, the three reward checkpoints and policy seeds 0–2 are all
+committed, so a default run trains only the seven new policy seeds.
+
+```bash
+pip install -r requirements.txt     # requirements.lock pins exact versions
+python -m src.pipeline              # ~1 h: 7 GRPO seeds + screen + report
+```
+
+Stages whose artifacts already exist are skipped. Resume is by artifact on
+disk, not by a state file, so an interrupted run simply continues.
+
+## 3. Full reproduction
+
+```bash
+python -m src.pipeline --force      # ~5 h, retrains the 300-run classifier grid
+```
+
+Costs, measured on CPU (these graphs are too small for accelerator launch
+overhead to pay off):
+
+| stage | work | wall clock |
+|---|---|---|
+| contract | 5 self-checks, cache build, split verification | 41 s |
+| classifier | 300 runs: base 80, edge 60, hybrid 80, hybrid_batch 80 | ~4 h |
+| reward | load + verify the frozen ensemble | 10 s |
+| generator | MLE warm start 9 min, then 10 × 6 min GRPO | ~1.2 h |
+| screen | pool, screen, score, rank | <1 min |
+| report | holdout eval, aggregation, paired analysis | ~20 min |
+
+---
+
+## 4. The two classifier roles
+
+**This is the seam, and it is the one thing to get right.** The classifier is
+trained twice because it has two incompatible jobs.
+
+| role | command | result tree | BBBP | B3DB | Wang |
+|---|---|---|---|---|---|
+| **reported** | `train_hybrid --run-all --norm batch` | `results/hybrid_batch/` | **0.921** | 0.905 | **0.850** |
+| **frozen reward** | `run_all` + `train_edge --run-all` (GraphNorm default) | `results/{bbbp,b3db}/`, `results/edge_ablation/` | 0.909 | 0.900 | 0.839 |
+
+BatchNorm scores ~0.010 higher and is **disqualified as a reward**. In train
+mode its statistics come from the batch, so a molecule's logit depends on which
+other molecules share its batch — the same molecule earns a different reward
+depending on its GRPO group, and the reward stops being a function of the
+molecule. Measured by `python -m src.models` on a 4-graph batch in train mode:
+batch drifts **3.97e-02**, graph 6.0e-08, layer 3.7e-09. `eval()` guards contain
+this in practice; GraphNorm removes the failure mode instead of guarding it.
+
+**The reward ensemble is not a hybrid model.** It is base/edge `gin`/`gat`/`gine`
+at seed 0 under GraphNorm — no descriptors. That is what every committed
+generator result was trained against, so swapping it changes the meaning of
+every number in `results/brics_kl1/`. `reward.load_frozen_classifier` verifies
+three things on every load: `feature_id` per member, element-wise fold identity
+across members, and norm identity. Any mismatch raises rather than scoring.
+
+Operator choice is free — GCN / SAGE / GAT land within 0.01 of each other. GCN
+is the cheapest.
+
+---
+
+## 5. Stage reference
+
+### contract
+`FEATURE_ID` must print `c0c3bbb8`. It is a content hash of
+`atom_features`/`bond_features` over a fixed probe set, so it moves by itself if
+the featurizer changes — a constant someone must remember to bump is a constant
+that will be wrong exactly once. It is recorded in every `metrics.json` and
+checked on every checkpoint load. `NODE_DIM` 39, `EDGE_DIM` 7.
+
+Then the five module self-checks run exactly as their docstrings document them
+(`python -m src.featurize`, `src.split`, `src.models`, `src.brics`,
+`src.datasets`), including BRICS round-tripping 2039/2039 BBBP molecules and the
+split-leak assertions on both datasets.
+
+### classifier
+Four arms, 300 runs, 10 seeds each. **Each seed is a different scaffold split**,
+so every `±` includes split variance, not just initialization variance.
+
+`--norm batch` routes to `results/hybrid_batch/` via `train_hybrid.results_dir`.
+That arm holds the repo's best numbers and for a long time no committed command
+could regenerate it — it was produced ad hoc while `eval_external_holdout` read
+it. It is now reproducible.
+
+### reward
+A gate, not a build step. There is no freeze/export: the ensemble is read from
+the committed checkpoints in place. If it raises, the run stops before any
+generator work. **If you retrain the classifier, nothing re-points the reward —
+it picks up whatever is at those paths.**
+
+### generator
+BRICS fragment assembly, valid by construction. The settled point:
+
+```
+kl_coef         1.0     steps        250     group_size  64
+min_heavy_atoms 10      threads      6       reward_seed 0
+warm start      results/generator/bbbp_brics_pretrained.pt
+policy seeds    0-9
+```
+
+**`kl_coef=1.0` is the single most important value here.** The repo default is
+0.3, validated for the SELFIES action space, and it does not transfer: the same
+coefficient yields ~10.7× the KL on this action space, and at 0.3 BRICS
+collapses to scaffold 0.643 with 26% literal duplicates per group. Do not
+"restore the default".
+
+**The MLE warm start is not optional.** From a uniform policy every group is
+all-invalid, the group standard deviation is zero, and `group_advantages`
+correctly returns no gradient — GRPO would wait for validity to appear by
+chance.
+
+**`--threads` is configuration, not tuning.** OpenMP changes the order of float
+reductions, so it is part of the run identity and is recorded in each
+`config.json`. Runs being compared must share it.
+
+**Three orthogonal axes, and run directory names do not encode them.** The
+committed dirs use two incompatible conventions, and `rs0_ws0`/`rs0_ws1` have
+identical `seed` and `reward_seed` — they differ only in warm start. Every axis
+is read from `config.json`. New runs use one convention, `pseed<n>`.
+
+| axis | flag | levels |
+|---|---|---|
+| policy seed | `--seed` | 0–9 (`rs0_ws0`, `gseed1`, `gseed2`, `pseed3`…`pseed9`) |
+| reward seed | `--reward-seed` | 0, 1 (`rs1_*`) |
+| warm start | `--warm-start` | `bbbp_brics_pretrained.pt`, `bbbp_brics_mle_s1.pt` |
+
+`--reward-seed` selects which scaffold-split fold the ensemble comes from. All
+ten are legal ensembles with element-wise identical folds. Do not pick one by
+looking at a test table — 0 is right because it was fixed before anyone looked.
+Vary it *between* runs to show a result is not one fold's artefact; never mix
+seeds within an ensemble, since members from different seeds have trained on
+each other's held-out molecules.
+
+### screen
+`postfilter` pools `samples/` from step ≥ 150 across the ten policy-seed runs,
+screens, scores and ranks. It selects run dirs by reading `config.json`, and
+deliberately excludes the `rs1_*` and `*_ws1` dirs: those are different axes,
+not more policy seeds.
+
+Output goes to `results/candidates/brics10/`. The earlier two-run screen is
+preserved at `results/candidates/brics/`.
+
+### report
+Read-only. `eval_external_holdout` → `collect_all` → `paired_analysis`.
+`master_comparison.csv` now carries a `norm` column, because `hybrid` and
+`hybrid_batch` differ in nothing else and a table without it invites reading a
+norm effect as an architecture effect.
+
+---
+
+## 6. What every part is worth
+
+Two tables, two different units. They are not comparable to each other.
+
+### Classifier — Δ ROC-AUC, pooled over 4 operators × 2 datasets × 10 seeds, paired
+
+| component | Δ ROC-AUC | SEM | verdict |
+|---|---|---|---|
+| wide atom-level readout | **+0.1304** | — | the dominant factor |
+| 8 RDKit descriptors | **+0.0099** | 0.0019 | significant |
+| BatchNorm over GraphNorm | **+0.0074** | 0.0023 | significant |
+| descriptors + BatchNorm together | **+0.0195** | 0.0024 | significant, additive |
+| BRICS motif graph, intra + atom readout | +0.0064 | 0.0059 | within noise |
+| virtual node | +0.0003 | 0.0023 | within noise |
+| BRICS motif graph, added on top | −0.0042 | 0.0026 | within noise |
+| edge (bond) features | ~0 | — | within noise |
+| long-range atom connectivity | −0.0194 | — | slightly harmful |
+| HRM two-timescale recurrence | **−0.0381** | 0.0059 | significant, worse |
+| BRICS motif graph replacing atoms | **−0.1161** | 0.0107 | significant, much worse |
+
+**Descriptors and BatchNorm are the only two positive effects, and they stack:**
+predicted +0.0173 if independent, measured **+0.0195 ± 0.0024**. The reported
+classifier is exactly those two, and that is the whole case for it.
+
+The one sentence that explains the table: **BBB permeability behaves like a
+property of bulk composition, not of long-range topology.** Everything that adds
+compositional or whole-molecule information helps; everything that adds
+structural reasoning is neutral or harmful. That is why LightGBM on 8
+descriptors reaches 0.880, why the four operators are statistically
+indistinguishable, and why both HRM and the motif model failed.
+
+### Generator — reward, diversity and validity means
+
+| component | measured | n |
+|---|---|---|
+| assembly reconstruction | **2039/2039 exact** | full BBBP |
+| sanitization, trained policy | 0.9997 ± 0.0001 | 3 policy seeds |
+| sanitization, untrained policy | 0.9539 | 2560 samples |
+| scaffold diversity at the settled point | **0.8643 ± 0.0117 SEM** (sd 0.0202) | 3 policy seeds |
+| exact-duplicate freedom | 0.9821 ± 0.0030 SEM | 3 policy seeds |
+| classifier term `C` | 0.8824 ± 0.0056 SEM | 3 policy seeds |
+| total reward | 2.1517 ± 0.0123 SEM | 3 policy seeds |
+| instrument gap `C(BBBP) − C(B3DB)` | **+0.0381 ± 0.0155** vs real drugs' +0.0373; SELFIES +0.0551, Welch p = 0.003; per-sample ranges overlap | 12 |
+
+The n=3 figures are `generator_pipeline.md`'s headline. The ten-seed figures
+from this pipeline supersede them for precision; see §7.
+
+---
+
+## 7. Numbers, and which to report
+
+### Report ~0.85, not ~0.92
+
+| | BBBP (in-distribution) | Wang (n=55, novel) |
+|---|---|---|
+| hybrid + BatchNorm | 0.921 | 0.850 |
+| edge ablation | 0.893 | **0.853** |
+| base | 0.895 | 0.846 |
+| hybrid + GraphNorm | 0.909 | 0.839 |
+
+Adenot (n=59) is saturated at ~0.99 for every family and discriminates nothing.
+Wang is the informative set, and **everything falls to ~0.85 there.**
+
+**In-distribution ranking does not predict generalization.** Across 11 models
+the correlation between BBBP and Wang score is r = −0.45 (p = 0.16) —
+suggestive rather than established, but there is certainly no evidence *for*
+transfer. Plain hybrid is 1st–3rd in-distribution and 7th–9th on Wang. On the
+Wang holdout the four families span 0.014 against a per-family sd of ~0.05, so
+no family is separated from another there: `hybrid_batch` is chosen on
+in-distribution evidence and is merely *not contradicted* out of distribution.
+
+BatchNorm is the exception that makes the choice defensible: its gain is
+**+0.0101 in-distribution and +0.0108 on Wang** — same direction, same
+magnitude. It moves the hybrid family from last to second on Wang.
+
+**Do not rank operators on this data.** At 10 seeds, 4 of 24 within-family pairs
+separate at 95%, and every surviving effect is 0.004–0.02 AUC. The 3-seed claim
+that `gat − gin` was a 1.4 sd effect did not replicate (limitations 4.1).
+
+### Two generator numbers that must not be blurred
+
+| | what it is | n |
+|---|---|---|
+| **scaffold diversity** | a per-run statistic at **matched n=64**, averaged over policy seeds | 10 runs |
+| **candidate yield** | the size of the pooled, screened survivor set | 1 pool |
+
+Diversity statistics are sample-size dependent — scaffold fraction reads 0.758
+at n=199 and 0.595 at n=982 on the *same* BBBP molecules, a swing larger than
+any effect being measured. **Pooling ten runs for screening does not license
+re-quoting the diversity figure on the larger pool.** That is bias, not
+variance, and more seeds do nothing for it. Comparisons are valid only at
+matched molecule count.
+
+---
+
+## 8. The candidate set
+
+`results/candidates/brics10/` holds `screened.csv` (everything, with
+per-molecule rejection reasons) and `candidates.csv` (the top 25 by `C`). The
+two-run screen at `results/candidates/brics/` reported:
+
+```
+pooled, deduplicated : 5888
+undersized           :  179
+structural defect    :  122
+targeted alert       : 1988
+catalogue alert      : 2819
+already in training  : 1419   (exact-SMILES only: 1009)
+SURVIVORS            : 1746 (30%)
+C among survivors    : mean 0.858  sd 0.175  43% above 0.95
+```
+
+**Ranking by `C` is meaningful here, and that had to be checked.** A ranking is
+noise when `C` has stopped discriminating — in the collapsed baseline its
+within-group sd fell to 0.006 with everything above 0.95, below the model's own
+MC-dropout uncertainty. Among these survivors the sd is 0.175, so the ordering
+carries signal.
+
+**The top 25 are not representative of the population, on any axis.** This bit
+three separate claims before it was caught:
+
+| | top 25 by `C` | all survivors | real BBB+ drugs |
+|---|---|---|---|
+| mean `C` | 0.995 | 0.851 | 0.903 |
+| above 0.99 | 100% | 4.8% | 15.5% |
+| CNS-MPO | 0.598 ± 0.033 | **0.752 ± 0.005** | 0.753 ± 0.007 |
+| shares a training scaffold | 52.0% | 36.8% | — |
+
+Two readings follow. **The survivor set as a whole is indistinguishable from
+real drugs on CNS-MPO** (AUC 0.495, p = 0.87) and is **less `C`-saturated than
+real drugs**. The top 25 are the greasy extreme — logP 4.44 against the
+survivors' 2.95, TPSA 22.1 against 47.1 — because ranking by absolute `C`
+selects for it; the relationship is invisible globally (Spearman −0.032,
+p = 0.18) because it is confined to roughly the top 1%. And the top 25 sitting
+at `C` ≈ 1.0 *because they are the top 25 by `C`* is circular, not a saturation
+signature.
+
+If the intended use is a property-balanced shortlist, rank on something other
+than absolute `C`, or report CNS-MPO alongside it.
+
+Roughly two thirds of survivors carry a scaffold not in training.
+Constitutional novelty is screened; scaffold novelty is reported, not enforced.
+The top-ranked survivors are recognizable CNS pharmacophores — phenothiazines,
+dibenzazepines, benzhydryl-piperazines — which is what recombining BRICS
+fragments of CNS drugs should produce.
+
+---
+
+## 9. Known limits
+
+**Of the output**
+
+- **Not synthesis candidates.** Every survivor is a hypothesis.
+- **Not safe.** 39% of the real BBB+ drugs in BBBP fail the same screening
+  union, so passing it is not evidence of safety.
+- **Not novel scaffolds**, necessarily — 36.8% share a training scaffold.
+- **Not validated against measured permeability.**
+
+**Of the objective (the unresolved one)**
+
+BBBP labels transport, not drug-likeness. Chloroform, dichloromethane,
+bromoform, nitrous oxide, cyclopropane, ethanol and vinyl ether are all in BBBP
+labelled BBB+, **correctly** — anaesthetics and solvents do cross the barrier.
+Of the 65 molecules with ≤8 heavy atoms, 62 are positive. So a permeability
+objective is not wrong, it answers a different question than "is this a drug".
+Six candidate counterweights have now been tried and none holds: Tox21 scores
+CCl₄ at 0.251 against caffeine's 0.302, ClinTox reaches 0.909 test AUC but rates
+CCl₄ 0.920 against haloperidol 0.004, and descriptor distance, applicability
+domain, uncertainty penalties and in-loop alert penalties each failed or failed
+to generalize. The size gate and `kl_coef=1.0` contain the failure mode; nothing
+removes it.
+
+**Of the protocol**
+
+- **The split clusters acyclic molecules.** `MurckoScaffoldSmiles` returns `''`
+  for ring-free molecules, so they used to collapse into one group that, being
+  large, always landed in train — 95/1965 BBBP and 311/7805 B3DB molecules were
+  **never in a test fold**. They are now grouped by Morgan/Tanimoto (Butina,
+  0.6). This costs ~0.037 ROC-AUC on BBBP and is why the headline is lower than
+  this repo's earlier figures. `split.group_keys` is the single definition of
+  group identity, called by both the splitter and the leak assertion.
+- **Numbers are not comparable to the 0.65–0.70 BBBP literature figures**, which
+  come from the size-sorted DeepChem protocol. That protocol is degenerate here:
+  BBBP's back half is all class 1, so val/test come out 100% positive and
+  ROC-AUC is undefined.
+- **The kl frontier is single-seed.** Every frontier number is one draw. The
+  frontier spans 0.46–0.91 against a real-molecule control at 0.879, far wider
+  than the single-run sd of 0.0202, so its shape holds — but individual points
+  do not support comparison. `kl_coef=1.0` is the knee, not an optimum: 3.0 buys
+  scaffold 0.906 for `C` 0.781.
+- **The reward-seed and warm-start axes are at n=2.** `C(aspirin)` spans 0.2408
+  (seed 8) to 0.7917 (seed 5) across the ten folds. The scope is narrower than
+  that implies for *training* — `group_advantages` standardizes within the
+  group, and post-standardization the seeds agree at r ≈ 0.9 — but `postfilter`
+  ranks by **absolute** `C` with no standardization, so seed choice moves the
+  candidate ordering directly. That is why the seed is recorded with the set.
+- **Aromaticity is not guaranteed by construction.** Type compatibility plus an
+  explicit bond order guarantees connectivity and valence; two type-compatible
+  aromatic fragments can still produce a ring system RDKit cannot kekulize.
+  Untrained that is 4.6% of samples. The warm start removes it, which means part
+  of what those epochs teach is toolkit avoidance rather than chemistry — do not
+  report the validity gain as "the policy learned valid chemistry".
+- **No synthesizability claim.** BRICS assembly gives a retrosynthetic
+  plausibility floor by construction; nothing here tests it.
+
+**Two method rules, both earned the hard way**
+
+1. **Use Levene (median-centred) for a variance comparison, never the F-test**,
+   on any statistic that is bounded or piled up. The F-test's p-value was wrong
+   by four orders of magnitude on this data.
+2. **Leave-one-out before quoting any variance ratio or any max.** Both are
+   one-point statistics. A ratio that moves from 18.6 to 2.3 on removing one of
+   twelve observations is describing that observation, not the populations.
+
+`documentation/limitations.md` holds all of this in full, with the retractions.

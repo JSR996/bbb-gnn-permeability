@@ -545,11 +545,36 @@ less-confounded scale and is not explained by saturation alone.** Anyone
 reviving this must say which scale they mean; the two give different verdicts on
 whether the estimator is unusable in principle or merely useless in practice.
 
-**MC dropout is not confounded.** The same check gives corr(MC-dropout
-uncertainty, abs(C − 0.5)) = **−0.006** (Spearman +0.074), with no collapse
-across C bands (1.0x). So of the two estimators, MC dropout is weak but clean
-and member spread is weak and partly confounded. If the applicability-domain
-idea is revisited, MC dropout is the one still standing.
+**MC dropout is not confounded.** corr(MC-dropout uncertainty,
+abs(C − 0.5)) = **−0.006** (Spearman +0.074), no collapse across C bands.
+
+**The decisive test is C-MATCHED AUC, and it supersedes every raw AUC above.**
+Generated and real molecules have different `C` distributions *by construction*
+— the generator optimizes `C` — so a raw AUC between them partly measures that
+distribution difference rather than the estimator. Matching real molecules to
+the generated `C` distribution (20 quantile bins, mean C 0.879 vs 0.878 after
+matching) removes it:
+
+| estimator | raw AUC | C-matched AUC |
+|---|---|---|
+| member spread (logit) | 0.390 | **0.511** |
+| MC dropout (logit, K=50) | 0.622 | **0.533**, 95% CI [0.503, 0.563] |
+
+**Member spread carries no information beyond `C` position** — matched, it is
+chance. That is a stronger statement than "partly confounded" and it holds on
+the logit scale where the saturation argument is weak, so the two routes agree.
+
+**MC dropout retains a real but negligible signal.** The CI excludes chance, so
+there is information; AUC 0.533 is Cohen d ~ 0.12 per molecule, which a reward
+term cannot steer on. "Statistically above chance" and "usable as a per-molecule
+penalty" are different claims and only the first is true.
+
+**A bootstrap note, because the first version of this number was wrong.**
+Resampling only the C-matching gave 0.585 +/- 0.004. Resampling **both** the
+molecule sets and the matching gives 0.533 [0.503, 0.563] — a lower mean and an
+interval ~8x wider. Matching-only resampling holds the molecule sets fixed and
+is therefore overconfident, the same error as fixing one pool in a two-pool
+comparison (§4c). Resample every axis.
 
 `mc_dropout.py`'s own docstring anticipated the member-spread problem from a
 different angle: three members sharing a featurizer, a split and a skeleton may

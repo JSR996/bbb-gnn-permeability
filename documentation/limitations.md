@@ -564,10 +564,24 @@ matching) removes it:
 chance. That is a stronger statement than "partly confounded" and it holds on
 the logit scale where the saturation argument is weak, so the two routes agree.
 
-**MC dropout retains a real but negligible signal.** The CI excludes chance, so
-there is information; AUC 0.533 is Cohen d ~ 0.12 per molecule, which a reward
-term cannot steer on. "Statistically above chance" and "usable as a per-molecule
-penalty" are different claims and only the first is true.
+**MC dropout's effect is between d = 0.01 and d = 0.22, and a per-molecule term
+needs orders of magnitude more.** The closure does **not** rest on whether the
+CI clears chance by 0.003 — that lower bound is the first casualty of the >20
+tests run against this data. It rests on the whole interval being unusable:
+
+| | AUC | Cohen d | molecules needed for 80% power |
+|---|---|---|---|
+| CI lower | 0.503 | 0.011 | ~138,800 |
+| point | 0.533 | 0.117 | ~1,144 |
+| **CI upper** | **0.563** | **0.224** | **~312** |
+
+**A per-molecule penalty acts on n = 1.** Even the optimistic end of the
+interval needs ~312 molecules to resolve the difference the term is supposed to
+express. So the route closes whether or not the lower bound survives
+multiplicity correction.
+
+Stated this way deliberately rather than as "MC dropout carries real information
+beyond C", which is true and invites reviving the route on a marginal CI.
 
 **A bootstrap note, because the first version of this number was wrong.**
 Resampling only the C-matching gave 0.585 +/- 0.004. Resampling **both** the

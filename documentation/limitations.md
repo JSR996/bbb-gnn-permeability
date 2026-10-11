@@ -490,6 +490,45 @@ Driver: ad hoc (see the commit that closed this item). Not promoted to a module
 because it answers a question about a statistic rather than producing a
 recurring diagnostic.
 
+### 4.5 An uncertainty penalty has no usable per-molecule signal **[measured]**
+*Proposed as a reward term against the layer-3 problem, following the
+applicability-domain framing (DyRAMO, Nat Commun 2025). Measured first, and
+there is nothing to add. No term was built and nothing was changed.*
+
+The idea: the reward is unreliable off-distribution, so penalise high predictive
+variance and keep generation where the classifier can be trusted. Both
+uncertainty definitions this repo can compute were tested on existing
+`brics_kl1` samples against real BBBP draws, read-only.
+
+| definition | per-molecule AUC, generated vs real |
+|---|---|
+| MC-dropout within each member (K=50) | 0.533 |
+| ensemble-member spread | **0.477** |
+
+**A reward term acts per molecule, and neither definition discriminates there.**
+MC dropout reaches AUC 0.533 (per-molecule Welch p = 0.108); member spread is
+0.477, i.e. *below* chance — generated molecules produce **more** member
+agreement than real ones (0.773 vs 0.807), the opposite of what the framing
+needs.
+
+**The set-level test is significant and that is the trap.** Averaged over 64
+molecules, generated sets do show higher MC-dropout spread: 1.0061 +/- 0.0060
+against 0.9881 +/- 0.0037, t = 2.56, p = 0.020, Cohen d = 1.04 over 12 sets per
+arm. Same data, AUC 0.533. Averaging cancels per-molecule noise and manufactures
+a population effect that cannot be acted on one molecule at a time. **A d = 1.04
+set-level effect and a 0.53 per-molecule AUC are compatible**, and the per-
+molecule number is the one a reward term lives on.
+
+Redundancy was not the obstacle — uncertainty correlates with `C` at
+rho = −0.095 on generated molecules, so it would have added independent
+information had there been any.
+
+`mc_dropout.py`'s own docstring anticipates the member-spread result: three
+members sharing a featurizer, a split and a skeleton may be too similar to
+disagree, so low spread cannot be read as genuine certainty. **No mechanism is
+proposed** for why generated molecules draw *more* agreement — the measurement
+rules the term out either way, and this data cannot support an explanation.
+
 ---
 
 ## 4b. Validation protocols now in force

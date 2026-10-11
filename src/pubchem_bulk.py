@@ -176,10 +176,15 @@ def _self_check() -> None:
 
 
 def main() -> None:
+    global OUTDIR
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("table", nargs="?", type=Path,
                     help="path to CID-InChI-Key.gz")
+    ap.add_argument("--screened", type=Path, default=SCREENED,
+                    help="screened.csv of the arm to classify")
+    ap.add_argument("--outdir", type=Path, default=OUTDIR,
+                    help="where the three CSVs are written")
     ap.add_argument("--self-check", action="store_true")
     args = ap.parse_args()
     if args.self_check:
@@ -187,7 +192,8 @@ def main() -> None:
     if not args.table or not args.table.exists():
         ap.error("pass the path to CID-InChI-Key.gz")
 
-    scr = pd.read_csv(SCREENED)
+    OUTDIR = args.outdir
+    scr = pd.read_csv(args.screened)
     keys = inchikeys(list(scr.smiles))
     print(f"{len(scr)} molecules, {len(keys)} InChIKeys, "
           f"{len(set(keys.values()))} distinct\n")

@@ -241,12 +241,48 @@ That swing exceeds any effect being measured. `diversity.reference_band`
 handles this, but any comparison made without it — including comparisons
 between two generated sets of different sizes — is invalid.
 
-### 4.4 Most per-step diagnostics come from one group of 64 **[untested]**
-Within-group scaffold fraction conflates "the policy is narrow" with "64 draws
-is a small sample". Sampling M groups per checkpoint and comparing within-group
-against pooled diversity would separate them. Not done — so every "diversity
-collapsed" claim assumes the policy's support genuinely shrank, rather than
-having verified it.
+### 4.4 Most per-step diagnostics come from one group of 64 **[measured]**
+*Within-group `scaffold_frac` at n=64 is validated as a COMPARATIVE statistic
+and must not be read as a support fraction. The conflation is real but it does
+not bite, because a wide-support control scores the same as the policy.*
+
+M=8 groups of N=64 per checkpoint, against real BBBP molecules drawn the same
+way as the wide-support control:
+
+| source | within-group | pooled (n=512) | distinct scaffolds, 1→8 groups |
+|---|---|---|---|
+| trained (kl=1.0, seed 0) | 0.877 +/- 0.013 | 0.678 | 60 → 347 (5.8x) |
+| warm start | 0.828 +/- 0.013 | 0.633 | 52 → 324 (6.2x) |
+| **real BBBP (control)** | **0.879 +/- 0.011** | **0.633** | 56 → 324 (5.8x) |
+
+**The within-to-pooled drop is a sample-size property, not evidence of a narrow
+policy.** Real BBBP molecules show the same drop (ratio 0.72) as the trained
+policy (0.77). A distribution with ~1000 scaffolds in it still scores 0.879
+within-group at n=64, so 0.879 is approximately the ceiling the sample size
+imposes and not a statement about support.
+
+**The trained policy is indistinguishable from the real-molecule control on
+this statistic** (0.877 +/- 0.013 against 0.879 +/- 0.011) and accumulates
+distinct scaffolds at the same rate. No claim is made that it is *better*: the
+pooled figures and accumulation counts are one draw of 8 groups each with no
+error bar, and this is exactly the regime that produced the retractions in §4c.
+
+Consequences for existing numbers:
+
+* Diversity comparisons between arms measured identically remain valid, which
+  is every frontier number and the 0.864 headline. The kl frontier spans
+  0.46 to 0.91 against a control at 0.879 — far outside what sample size alone
+  explains.
+* The historical collapse claims (SELFIES scaffold 0.07–0.14) are genuine
+  narrowing: they sit an order of magnitude below the real-molecule reference
+  under the identical statistic.
+* **Absolute within-group values must not be quoted as diversity fractions.**
+  "0.88 of scaffolds are distinct" is wrong; "0.88, the same as real drugs at
+  this sample size" is right.
+
+Driver: ad hoc (see the commit that closed this item). Not promoted to a module
+because it answers a question about a statistic rather than producing a
+recurring diagnostic.
 
 ---
 

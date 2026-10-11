@@ -262,6 +262,42 @@ Caveats: one GRPO seed and one warm start per cell. 6 start-vs-end tests across
 the item, threshold x6 = 0.0083; the two significant results clear it by >10
 orders of magnitude and the BBBP reference clears it at 0.0042.
 
+**The reward-headroom explanation was tested and is EXCLUDED.** The proposed
+mechanism was that B3DB's reward has more room left to climb — real molecules
+average C 0.663 under the B3DB ensemble against 0.755 under BBBP's — so its
+policy climbs further (+0.305 vs +0.112) and pays diversity for the climb.
+
+Tested on the `--reward-seed` axis, which moves BBBP headroom independently of
+the dataset. Seed 1 has the most headroom (real-molecule C 0.688), seed 5 the
+least (0.787); that 0.098 span exceeds the 0.092 BBBP→B3DB gap that produced
+the effect. Three GRPO seeds each, kl=1.0, ws0, 250 steps
+(`results/brics_headroom/`):
+
+| reward seed | headroom | C climb | scaffold delta |
+|---|---|---|---|
+| 1 | 0.688 | +0.113 +/- 0.007 | +0.014 +/- 0.008 |
+| 5 | 0.787 | +0.092 +/- 0.004 | +0.012 +/- 0.011 |
+
+| pre-specified | seed1 − seed5 | p | predicted? |
+|---|---|---|---|
+| C climb higher | +0.0219 | 0.063 | direction yes, not significant |
+| scaffold delta lower | **+0.0026** | 0.86 | **no** |
+
+**Half the mechanism holds and the load-bearing half does not.** More headroom
+does buy a longer climb in `C` (+0.022, directionally as predicted, though
+p = 0.063 against the x2 threshold of 0.025) — which is close to definitional,
+since a lower starting C leaves more room. But the *consequence* the hypothesis
+requires, that climbing costs diversity, does not follow at all.
+
+This is an exclusion rather than a null: the difference is +0.003 with a 95% CI
+of [−0.037, +0.043], while the predicted effect scaled to this headroom span is
+**−0.217**, which the CI excludes by 15.8 SEM.
+
+So B3DB's behaviour is not explained by how saturated its reward is. Candidates
+not yet excluded include corpus size (7805 vs 2039 molecules), action-space size
+(~11.6k vs 6051), and label composition — **no replacement mechanism is proposed
+here**, because the data that falsified this one cannot support a successor.
+
 ---
 
 ## 2. The permeability classifier

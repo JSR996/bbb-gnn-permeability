@@ -256,12 +256,64 @@ def run_screen(force=False):
                     min_heavy_atoms=MIN_HEAVY_ATOMS, top=25)
 
 
+#: The headline scaffold statistic is the mean of the last 25 logged steps of a
+#: run, each computed at a matched group of 64. Recovered by fitting the
+#: committed 3-seed figure (0.8643, sd 0.0202, SEM 0.0117) rather than taken on
+#: trust, so the 10-seed number is computed the same way as the one it extends.
+HEADLINE_TAIL = 25
+
+
+def scaffold_headline(dirs: list[Path]) -> tuple[float, float, dict[str, float]]:
+    """(mean, sd, per-run) scaffold diversity over the last HEADLINE_TAIL steps.
+
+    This is a PER-RUN statistic at matched n=64, averaged across runs. It is not
+    a property of a pooled set: scaffold fraction reads 0.758 at n=199 and 0.595
+    at n=982 on the same BBBP molecules, a swing larger than any effect being
+    measured (limitations 4.3/4.4). Never recompute it on the pooled candidate
+    set and quote it next to these numbers.
+    """
+    import numpy as np
+    import pandas as pd
+    per = {}
+    for d in dirs:
+        h = pd.read_csv(d / "history.csv")
+        per[d.name] = float(h["scaffold_frac"].tail(HEADLINE_TAIL).mean())
+    v = np.array(list(per.values()))
+    return float(v.mean()), float(v.std(ddof=1)), per
+
+
 def plan_report():
     return "always runs (read-only aggregation)", True
 
 
 def run_report(force=False):
+    import numpy as np
     from . import collect_all, eval_external_holdout, paired_analysis
+
+    dirs = policy_seed_dirs()
+    if dirs:
+        mean, sd, per = scaffold_headline(dirs)
+        n = len(dirs)
+        print(f"\nscaffold diversity, per-run at matched n=64, last "
+              f"{HEADLINE_TAIL} steps, over {n} policy seeds:")
+        print(f"  mean {mean:.4f}  sd {sd:.4f}  SEM {sd / np.sqrt(n):.4f}")
+        for k, v in sorted(per.items()):
+            print(f"    {k:<10} {v:.4f}")
+
+        # The n=3 subset must still reproduce the committed figure exactly. If
+        # it does not, this statistic is being computed differently from the
+        # one it claims to extend, and the 10-seed number is not comparable --
+        # a precise wrong headline, which is worse than an imprecise right one.
+        legacy = [d for d in dirs if d.name in set(LEGACY_DIRS.values())]
+        if len(legacy) == 3:
+            m3, sd3, _ = scaffold_headline(legacy)
+            print(f"  n=3 subset check: {m3:.4f} +/- {sd3:.4f} "
+                  f"(committed: 0.8643 +/- 0.0202)")
+            assert abs(m3 - 0.8643) < 5e-4 and abs(sd3 - 0.0202) < 5e-4, (
+                f"n=3 subset gives {m3:.4f}/{sd3:.4f}, not 0.8643/0.0202 -- the "
+                f"statistic changed, so the {n}-seed figure is not comparable"
+            )
+
     with _argv(["eval_external_holdout"]):
         eval_external_holdout.main()
     with _argv(["collect_all"]):
@@ -331,6 +383,16 @@ def _self_check() -> None:
         assert isinstance(status, str) and isinstance(todo, bool), name
 
     assert KL_COEF == 1.0, "kl_coef 0.3 collapses BRICS; see the module docstring"
+
+    # The headline statistic must reproduce the committed 3-seed figure on the
+    # three committed runs. This is the check that keeps the 10-seed number
+    # commensurable with the one it supersedes.
+    legacy = [BRICS_DIR / n for n in LEGACY_DIRS.values()]
+    if all((d / "history.csv").exists() for d in legacy):
+        m, sd, _ = scaffold_headline(legacy)
+        assert abs(m - 0.8643) < 5e-4, f"3-seed scaffold mean is {m:.4f}, not 0.8643"
+        assert abs(sd - 0.0202) < 5e-4, f"3-seed scaffold sd is {sd:.4f}, not 0.0202"
+
     print("pipeline self-check passed")
 
 

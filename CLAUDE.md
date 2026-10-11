@@ -38,11 +38,18 @@ python -m src.split          # grouping + the leak-assertion trap
 ## Common commands
 
 ```bash
+# everything, in order, resuming by artifact on disk -- prefer this
+python -m src.pipeline --list          # what would run, what would skip
+python -m src.pipeline                 # classifier -> reward -> generator -> screen
+python -m src.pipeline --only reward    # one stage
+python -m src.pipeline --from generator # that stage onward
+
 # classifier
 python -m src.train --model gcn --dataset bbbp --seed 0   # one run
 python -m src.run_all                                     # all 80 base runs
 python -m src.train_edge --run-all                        # 60
-python -m src.train_hybrid --run-all                      # 80
+python -m src.train_hybrid --run-all                      # 80, GraphNorm
+python -m src.train_hybrid --run-all --norm batch          # 80 -> results/hybrid_batch
 python -m src.run_all --threads 6 --force                 # pin reduction order
 python baselines/descriptor_baseline_v2.py                # LightGBM, no torch
 
@@ -52,10 +59,24 @@ python -m src.eval_external_holdout   # score every checkpoint on them
 python -m src.paired_analysis --all-sources
 python -m src.collect_all             # -> results/master_comparison.csv
 
-# generation (cold start from a fresh clone is these two lines)
-python -m src.generator --pretrain    # MLE warm start, ~1 min CPU
-python -m src.train_gan --steps 200   # GRPO, ~0.7 s/step at group 64
+# generation -- BRICS is the settled generator; src/generator.py is SELFIES legacy
+python -m src.reward                   # the gate. If it fails, STOP.
+python -m src.brics_generator --pretrain   # MLE warm start, ~9 min CPU, NOT optional
+python -m src.train_gan --generator brics --steps 250 --threads 6 \
+    --seed 0 --reward-seed 0 --kl-coef 1.0 \
+    --warm-start results/generator/bbbp_brics_pretrained.pt \
+    --out-dir results/brics_kl1/rs0_ws0
+python -m src.postfilter results/brics_kl1/* --from-step 150 \
+    --out results/candidates/brics10
 ```
+
+**`--kl-coef 1.0` is mandatory for BRICS.** The repo default 0.3 was validated
+for the SELFIES action space and does not transfer â€” the same coefficient
+yields ~10.7x the KL here, and at 0.3 BRICS collapses to scaffold 0.643 with
+26% duplicates per group. Never "restore the default".
+
+`documentation/full_pipeline.md` is the single recipe; `pipeline.md` and
+`generator_pipeline.md` are the per-half evidence.
 
 Runs write to `results/<family>/.../seed<n>/`; classifier checkpoints are
 committed, so the reward half never needs retraining.
@@ -74,23 +95,35 @@ attributable to aggregation rather than capacity. Extensions each live in their
 own `models_*.py` + `train_*.py` pair (`_edge`, `_hybrid`) and write to
 their own `results/` subtree, deliberately kept out of `MODELS` so the core
 comparison stays edge-blind and descriptor-blind. D-MPNN was dropped (no
-consistent gain, and it cost 60 runs at 10 seeds). The **generator** is a GRU
-over SELFIES conditioned on `z`, trained by GRPO against the frozen classifier
-ensemble plus QED, SA and a discriminator.
+consistent gain, and it cost 60 runs at 10 seeds).
+
+The **generator** assembles BRICS fragments (`brics_assembly.py`,
+`brics_generator.py`), so its output is valid by construction; it is trained by
+GRPO against the frozen classifier ensemble plus QED, SA and a discriminator.
+`generator.py`'s GRU over SELFIES is the superseded arm, kept because the
+frontier comparison cites it.
+
+**The classifier is trained twice, on purpose.** `--norm batch` â†’
+`results/hybrid_batch/` is the reported model (BBBP 0.921, Wang 0.850). The
+GraphNorm default is what a frozen reward must use: BatchNorm takes its
+statistics from the batch, so `C(m)` would depend on which molecules shared
+m's GRPO group. The reward ensemble is *not* a hybrid model â€” it is base/edge
+`gin`/`gat`/`gine` at seed 0 under GraphNorm, which is what every committed
+generator result was trained against.
 
 `src/datasets.py` owns `ROOT` (repo root) and the processed-graph cache; every
 module reads data through it rather than building paths itself.
 
-### The run contract — read this before touching the featurizer
+### The run contract ï¿½ read this before touching the featurizer
 
 Checkpoints here are bare `state_dict`s, and `build_model`'s **default
-arguments were the only thing making them loadable** — no caller ever passed
+arguments were the only thing making them loadable** ï¿½ no caller ever passed
 `in_dim`. So changing a default silently invalidated all 73 committed
 checkpoints, and `load_dataset` keyed its cache on the dataset name alone, so a
 featurizer change could return stale graphs and never raise.
 
 - `featurize.FEATURE_ID` is a **content hash of the featurizer's own output** on
-  a fixed probe set — derived, not declared. If you add a feature no probe
+  a fixed probe set ï¿½ derived, not declared. If you add a feature no probe
   exercises, extend `_PROBE` in the same diff or the guard goes blind.
 - `train.py` records it in `metrics.json` with `node_dim`, `hidden`,
   `num_layers`, `dropout`, `heads`, `norm`, `virtual_node`, `split`.
@@ -99,7 +132,7 @@ featurizer change could return stale graphs and never raise.
   `eval_external_holdout` rebuild a checkpoint the way it was trained rather
   than the way today's defaults happen to be.
 - `datasets.cache_path` keys on `FEATURE_ID`, so a mismatched cache is not
-  detected — it simply isn't found, and rebuilds.
+  detected ï¿½ it simply isn't found, and rebuilds.
 - Pre-contract checkpoints live in `results_v1/` and are **refused by design**.
   `results/generator/` was deliberately left in place: those checkpoints are
   self-describing and feature-independent.
@@ -126,7 +159,7 @@ Violating any of these silently invalidates results rather than raising:
   undefined. Consequence: absolute numbers are **not** comparable to the
   widely quoted 0.65â€“0.70 BBBP figures. Comparable range is ~0.90.
 - **Normalization defaults to LayerNorm, and that is a correctness choice.**
-  `BatchNorm1d` made a molecule's logit depend on what shared its batch — fine
+  `BatchNorm1d` made a molecule's logit depend on what shared its batch ï¿½ fine
   for a classifier, a bug for a frozen reward, since the same molecule earned a
   different reward depending on its GRPO group. Measured by
   `python -m src.models` on a 4-graph batch in train mode: **batch drifts
@@ -136,9 +169,9 @@ Violating any of these silently invalidates results rather than raising:
 - **`split.group_keys` is the single definition of group identity.**
   `scaffold_split` and `check_split` must group identically or the leak
   assertion fires on every run. Acyclic molecules used to collapse into one
-  `""` group that always landed in train (95/1965 BBBP, 311/7805 B3DB — never
+  `""` group that always landed in train (95/1965 BBBP, 311/7805 B3DB ï¿½ never
   tested); they now cluster by Tanimoto. If a change makes `check_split` fire,
-  fix the grouping — **do not weaken the assertion**, or every number in the
+  fix the grouping ï¿½ **do not weaken the assertion**, or every number in the
   repo becomes unverifiable.
 - **Thread count is part of the configuration.** OpenMP changes float reduction
   order and the GRPO loop is chaotic. `OMP_NUM_THREADS` is unreliable (36

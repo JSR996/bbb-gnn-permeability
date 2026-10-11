@@ -222,14 +222,33 @@ indistinguishable, and why both HRM and the motif model failed.
 | assembly reconstruction | **2039/2039 exact** | full BBBP |
 | sanitization, trained policy | 0.9997 ± 0.0001 | 3 policy seeds |
 | sanitization, untrained policy | 0.9539 | 2560 samples |
-| scaffold diversity at the settled point | **0.8643 ± 0.0117 SEM** (sd 0.0202) | 3 policy seeds |
+| scaffold diversity at the settled point | **0.8541 ± 0.0059 SEM** (sd 0.0186) | **10 policy seeds** |
 | exact-duplicate freedom | 0.9821 ± 0.0030 SEM | 3 policy seeds |
 | classifier term `C` | 0.8824 ± 0.0056 SEM | 3 policy seeds |
 | total reward | 2.1517 ± 0.0123 SEM | 3 policy seeds |
 | instrument gap `C(BBBP) − C(B3DB)` | **+0.0381 ± 0.0155** vs real drugs' +0.0373; SELFIES +0.0551, Welch p = 0.003; per-sample ranges overlap | 12 |
 
-The n=3 figures are `generator_pipeline.md`'s headline. The ten-seed figures
-from this pipeline supersede them for precision; see §7.
+### The seed bump, and what it changed
+
+`generator_pipeline.md` reports this point at 3 policy seeds. Running the other
+seven moved the headline:
+
+| | n=3 | n=10 |
+|---|---|---|
+| scaffold mean | 0.8643 | **0.8541** |
+| sd | 0.0202 | 0.0186 |
+| SEM | 0.0117 | **0.0059** |
+
+**The sd estimate held, so the old spread was sound — but the mean was 0.010
+high.** The three committed runs happen to include `rs0_ws0` at 0.8874, the
+highest of all ten. Nothing was selected; it was a three-draw sample from a
+distribution with sd 0.019, and 0.8643 sat 1.7 SEM above the ten-seed mean.
+
+The n=3 subset still returns 0.8643/0.0202 exactly under the same statistic, so
+the two figures are commensurable and the move is real rather than an artefact
+of recomputing it differently.
+
+**Report 0.854 ± 0.006.** Per-seed values span 0.830 to 0.887.
 
 ---
 
@@ -282,19 +301,22 @@ matched molecule count.
 ## 8. The candidate set
 
 `results/candidates/brics10/` holds `screened.csv` (everything, with
-per-molecule rejection reasons) and `candidates.csv` (the top 25 by `C`). The
-two-run screen at `results/candidates/brics/` reported:
+per-molecule rejection reasons) and `candidates.csv` (the top 25 by `C`).
 
-```
-pooled, deduplicated : 5888
-undersized           :  179
-structural defect    :  122
-targeted alert       : 1988
-catalogue alert      : 2819
-already in training  : 1419   (exact-SMILES only: 1009)
-SURVIVORS            : 1746 (30%)
-C among survivors    : mean 0.858  sd 0.175  43% above 0.95
-```
+| | 10 runs (`brics10/`) | 2 runs (`brics/`) |
+|---|---|---|
+| pooled, deduplicated | 19219 | 5888 |
+| undersized | 475 | 179 |
+| structural defect | 460 | 122 |
+| targeted alert | 6597 | 1988 |
+| catalogue alert | 9864 | 2819 |
+| already in training | 1747 | 1419 |
+| **survivors** | **6591 (34%)** | 1746 (30%) |
+| `C` among survivors | 0.854 ± 0.182 | 0.858 ± 0.175 |
+
+**3.8× the candidate set**, at an essentially unchanged survival rate and `C`
+distribution — so the extra seeds buy yield rather than changing what the
+generator produces. The two-run set is preserved for the figures that cite it.
 
 **Ranking by `C` is meaningful here, and that had to be checked.** A ranking is
 noise when `C` has stopped discriminating — in the collapsed baseline its
@@ -323,6 +345,47 @@ signature.
 
 If the intended use is a property-balanced shortlist, rank on something other
 than absolute `C`, or report CNS-MPO alongside it.
+
+### What the output actually looks like
+
+Three selections from the same 6591 survivors, which is the clearest way to see
+why the display set matters:
+
+| selection | n | C | QED | logP | TPSA | MW |
+|---|---|---|---|---|---|---|
+| top by `C` | 6 | 0.997 | 0.72 | **4.77** | **10.7** | 386 |
+| random survivors | 6 | 0.817 | 0.69 | 1.83 | 59.4 | 286 |
+| `QED > 0.8` **and** `C > 0.95` | 6 | 0.982 | **0.94** | 2.83 | 47.7 | 313 |
+| **whole population** | 6591 | 0.854 | 0.68 | 3.04 | 49.9 | 323 |
+
+The top-by-`C` rows include one at logP +7.91 with QED 0.25 — ranking on
+absolute `C` alone selects for greasiness. Filtering on `QED > 0.8 ∧ C > 0.95`
+costs 0.015 of `C` and returns a set that is drug-like on every axis. **That,
+not `candidates.csv`'s top 25, is what a shortlist should be drawn from.**
+
+Examples from the balanced set:
+
+```
+C=0.991 QED=0.95  NC(=O)ON1CCC(c2ccccc2)(c2ccccc2)CC1        benzhydryl carbamate
+C=0.990 QED=0.94  Cc1cc(CCN2CCN(c3ccccc3Cl)CC2)n[nH]1        aryl-piperazine
+C=0.986 QED=0.94  CCN(CC)C(=O)C1CC2c3cccc4[nH]cc(c34)CC2N(C)C1   dihydro-lysergamide
+C=0.981 QED=0.94  CC(=O)NCCN1CCC(c2noc3cc(F)ccc23)CC1        benzisoxazole-piperidine
+```
+
+**One of them is LSD.** `CCN(CC)C(=O)C1C=C2c3cccc4[nH]cc(c34)CC2N(C)C1` is
+constitutionally identical to lysergic acid diethylamide (verified by flattened
+canonical SMILES), and it is **not in BBBP even after flattening** — so it is
+not a screening leak. BBBP does contain other ergolines (pergolide,
+cabergoline, romergoline), so the generator recombined BRICS fragments of those
+relatives into a compound it never saw.
+
+Read that for exactly what it is. It is strong evidence the policy reaches real
+CNS pharmacophore space rather than scoring artefacts — and it is **not** a
+novelty claim (LSD is well known) and **not** a safety signal. It is the
+objective working as specified: LSD crosses the blood-brain barrier extremely
+effectively, which is the only question `C` asks. A controlled substance
+surfacing near the top of a permeability-optimized set is §9's unresolved
+objective problem, demonstrated rather than argued.
 
 Roughly two thirds of survivors carry a scaffold not in training.
 Constitutional novelty is screened; scaffold novelty is reported, not enforced.

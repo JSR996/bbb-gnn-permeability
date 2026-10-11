@@ -392,6 +392,46 @@ signature.
 If the intended use is a property-balanced shortlist, rank on something other
 than absolute `C`, or report CNS-MPO alongside it.
 
+### Training data, already known, or novel
+
+Every one of the 19219 generated molecules resolved against PubChem's full
+`CID-InChI-Key` table (124.7M compounds, scanned locally in 3.2 min — see
+`src/pubchem_bulk.py` for why not the web API).
+
+| | all generated | screened survivors |
+|---|---|---|
+| | **n=19219** | **n=6591** |
+| in its training data | 1747 — 9.1% | 0 — by construction |
+| exist already, not in training | 3636 — 18.9% | 2071 — **31.4%** |
+| no record found — **novel** | 13836 — **72.0% ± 0.6%** | 4520 — **68.6% ± 1.1%** |
+
+**Memorization is low: 9.1%.** The generator is not mostly replaying its
+training set. Of what it does produce, roughly a fifth is chemistry that exists
+but that it never saw, and that fraction rises to 31.4% among survivors —
+screening preferentially keeps real compounds, which is a point in its favour.
+
+Matching is on the **full** InChIKey, including the protonation layer. CIDs 1
+and 2 share `RDHQFKQIGNGIED-UHFFFAOYSA` and differ only in the final character,
+so skeleton-only matching would conflate protonation states. Generated
+molecules are flat and neutral (`-UHFFFAOYSA-N`) and match PubChem's
+stereo-unspecified parent, which is why the generated lysergamide resolves to
+CID 3981 and not to LSD's stereo-defined CID 5761.
+
+The oldest survivors it rediscovered are small, very well-known compounds:
+phenylpropanoic acid (CID 107), 4-hydroxybenzoic acid (135), acetanilide (904),
+phenylalanine (994), phenylacetic acid (999).
+
+**Three limits on the novel figure.** It is an **upper bound**: neither query
+normalizes tautomers, so some "novel" molecules are known in another tautomeric
+form. It means absent from PubChem and the training corpus, not absent from
+every database. And it is not a quality signal — the bucket contains
+`C#CC1(OOOC(O)C(Cl)(Cl)Cl)CCCCC1`, a trioxide no alert catalogue flags. Some of
+that 72% is novel because it is bad.
+
+Validation: an independent 200-molecule random sample predicted 7.5% / 20.0% /
+72.5% before the census ran, against the census's 9.1% / 18.9% / 72.0% — inside
+sampling error on all three buckets.
+
 ### What the output actually looks like
 
 Three selections from the same 6591 survivors, which is the clearest way to see

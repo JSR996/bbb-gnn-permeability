@@ -261,11 +261,56 @@ policy (0.77). A distribution with ~1000 scaffolds in it still scores 0.879
 within-group at n=64, so 0.879 is approximately the ceiling the sample size
 imposes and not a statement about support.
 
-**The trained policy is indistinguishable from the real-molecule control on
-this statistic** (0.877 +/- 0.013 against 0.879 +/- 0.011) and accumulates
-distinct scaffolds at the same rate. No claim is made that it is *better*: the
-pooled figures and accumulation counts are one draw of 8 groups each with no
-error bar, and this is exactly the regime that produced the retractions in §4c.
+**Re-measured at n=32 groups per arm, identical procedure, exactly 64 molecules
+per group: training RAISED diversity rather than degrading it.**
+
+| arm | within-group (n=32) |
+|---|---|
+| trained (kl=1.0, seed 0) | 0.8838 +/- 0.0077 |
+| warm start | 0.8296 +/- 0.0088 |
+| real BBBP (control) | 0.8608 +/- 0.0075 |
+
+| comparison | diff | t | p | x3 | verdict |
+|---|---|---|---|---|---|
+| trained vs warm start | +0.0542 | 4.63 | <0.0001 | <0.001 | **established** |
+| warm start vs real | −0.0312 | −2.70 | 0.0089 | 0.027 | survives |
+| trained vs real | +0.0229 | 2.13 | 0.037 | 0.11 | **does not survive** |
+
+So at `kl_coef=1.0`, GRPO moved the policy from measurably *below* the
+real-molecule control to *at or slightly above* it. **That is the strongest form
+of "reward hacking is contained" in this project** — not merely that diversity
+failed to collapse, but that optimization increased it. The further claim that
+the trained policy *exceeds* real molecules does not survive correction for the
+three comparisons and is not made.
+
+**But the statistic resolves support poorly in exactly this band**, so "at the
+real level" bounds the support loosely. Pools built from BBBP with a known
+number of distinct scaffolds, same statistic:
+
+| scaffolds in pool | within-group @n=64 |
+|---|---|
+| 1021 | 0.871 +/- 0.013 |
+| 500 | 0.844 +/- 0.010 |
+| 300 | 0.830 +/- 0.015 |
+| 150 | 0.514 +/- 0.022 |
+| 20 | 0.268 +/- 0.007 |
+
+It discriminates sharply below ~300 scaffolds and weakly above: a 3.4x change in
+support (300 → 1021) moves it only 0.830 → 0.871. Both the trained policy and
+the control sit in the weakly-resolved region, so "comparable within-group
+score" is consistent with support differing by a factor of two. The
+scaffold-accumulation curve (347 distinct over 512 molecules for the trained
+policy against 324 for the control) is the better instrument there, and shows no
+deficit — stated descriptively, as it is one draw per arm.
+
+**A procedure note that explains an earlier discrepancy.** The warm start
+measured 0.854 in one place and 0.828-0.830 here. Cause: `scaffold_frac` is
+n-dependent, and the earlier figure divided by the ~62 valid molecules in a
+64-sample draw while these divide by exactly 64. Verified: same checkpoint,
+32 groups, gives 0.830 with the fixed-64 procedure and 0.854 keeping all valid
+from a 64-draw. Every arm in the tables above uses exactly 64, so the
+comparisons are matched; cross-measurement comparisons of this statistic are
+only valid at matched molecule count.
 
 Consequences for existing numbers:
 

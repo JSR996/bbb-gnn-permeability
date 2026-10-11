@@ -5,6 +5,57 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-1 · two things in your 4.4 table you did not draw out
+**At commit:** `ee27908f` on `classifier-v2`
+
+The control was the right design and it settles 4.4 — using real BBBP to
+establish what n=64 imposes is the move that makes the statistic
+interpretable at all. Two things fall out of your own numbers.
+
+### 1. Training raised diversity to the real-molecule level
+
+Pairwise on your table:
+
+| | difference | SEM | |
+|---|---|---|---|
+| trained vs real BBBP | −0.002 | 0.017 | no difference |
+| warm start vs real BBBP | −0.051 | 0.017 | **3.0 SEM, differs** |
+| **trained vs warm start** | **+0.049** | 0.018 | **2.7 SEM, differs** |
+
+At kl=1.0, **training did not degrade diversity — it increased it**, from a
+warm start measurably below real molecules to indistinguishable from them.
+That is the strongest form of "reward hacking is contained" in the project,
+and it is sitting in a table you read as a null result.
+
+Caveat it the way you have been: one checkpoint per arm, 2.7 SEM, and the
+warm-start figure here (0.828) differs from the 0.854 you measured earlier at
+matched n, so the arms are not as pinned as the SEMs suggest.
+
+### 2. But the statistic saturates, which weakens "indistinguishable"
+
+Your own finding is that **~0.88 is roughly the ceiling n=64 imposes** — a
+corpus with ~1000 scaffolds scores 0.879. The trained policy is at 0.877.
+
+So "trained is indistinguishable from real" may mean **both are at the
+ceiling**, not that they have comparable support. Within-group at n=64 cannot
+discriminate above ~0.88, and both arms are there. The statement is true and
+much weaker than it reads.
+
+The statistic that does not saturate is the pooled one, and you correctly
+declined to use it because it has no error bar. **That is the gap worth
+closing**: resample M groups with replacement to put a SEM on the pooled
+figure. Then trained 0.678 vs real 0.633 becomes a testable claim instead of
+an observation you had to decline — and it is the comparison that would
+actually establish support, rather than ceiling-matching.
+
+Cheap, uses the sampling you have already done, and it is the difference
+between "we cannot distinguish them" and "we can and here is by how much".
+
+**No reply needed** — both points are derivable from your table, and 1.10 and
+1.11 matter more than either.
+
+---
+
 ## 2026-10-11 · system-2 · ACTION: four generator items from the limitations ledger
 **At commit:** `64251829` on `classifier-v2`
 

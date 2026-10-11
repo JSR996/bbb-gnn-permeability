@@ -5,6 +5,80 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-2 · all four ledger items closed [measured]
+**At commit:** `39ac9dfa` on `brics-generator`
+
+All four to **[measured]**, none to [untested]. 4.4 and the training-raises-
+diversity followup were reported earlier; these are 1.10, 1.11 and 1.8.
+
+### 1.10 — 1000 steps, no sustained decay
+
+Window means hold: scaffold 0.873 (200-299) → 0.853 (900-999), unique 0.98
+throughout, validity 0.9998, reward still climbing. The apparent decay is a
+**settling transient**: regressing from step 250 gives p = 0.001, but from 400
+onward there is no trend (p = 0.179, 0.299, 0.623 for windows starting at 400,
+500, 700). Stated as a bound rather than an absence — 600 steps at per-step
+sd ~0.05 rules out decay faster than ~0.024 per 1000 steps. The documented
+ungated collapse ran 134x faster than even the transient slope.
+
+### 1.11 — the diversity gain is BBBP-specific, established at matched drift
+
+This is the one worth your attention. B3DB generation works (validity
+0.9997-0.9999 at every coefficient, unique 0.983-0.985 at kl>=1.0), so the
+engine is dataset-independent. The reward's behaviour is not.
+
+| arm | measured KL | scaffold | delta | p |
+|---|---|---|---|---|
+| **BBBP kl=1.0** | 0.482 | 0.887 | **+0.048** | 0.0007 |
+| B3DB kl=0.1 | 0.913 | 0.441 | **−0.402** | <1e-30 |
+| **B3DB kl=0.3** | **0.503** | 0.687 | **−0.156** | <1e-13 |
+| B3DB kl=1.0 | 0.097 | 0.831 | −0.025 | 0.096 |
+| B3DB kl=10.0 | 0.011 | 0.853 | +0.003 | 0.849 |
+
+The decisive row is B3DB kl=0.3 at KL 0.503 against BBBP's 0.482 — **matched
+drift, 1.04x**. There BBBP *gains* 0.048 and B3DB *loses* 0.156. Opposite signs,
+both far past x6 = 0.0083.
+
+**Matching on the coefficient would have given the wrong answer and nearly
+did.** At kl=1.0 B3DB shows no change (p = 0.096), a weak null, because the same
+coefficient delivers 5x less drift there. Your BBBP/B3DB-disagree prior was
+right, and it only shows up once the comparison is matched by measured effect.
+
+Also: there is no good operating point on B3DB among these five. Either the
+policy barely moves (kl=10.0: C 0.682, scaffold preserved because little was
+learned) or it learns and degrades diversity (kl=0.3: C 0.929, scaffold 0.687).
+BBBP has a setting that does both.
+
+**An error of mine worth recording**, since it is the kind your corrections keep
+catching: I first read B3DB's lower KL at the same coefficient as
+*under*-regularization and swept kl **upward** to 3 and 10. Backwards — a
+stronger penalty holds the policy nearer pi_ref, so higher coefficients
+*lower* measured KL (0.097 → 0.038 → 0.011). Sixteen minutes wasted, and the
+data corrected me rather than my own check. The upward cells did show that high
+coefficients just suppress learning (C 0.843 → 0.747 → 0.682 at flat scaffold).
+
+### 1.8 — −2.0 is the knee, and I was wrong to want to skip it
+
+I drafted a "cannot matter" reason and checked it first: the floor binds on
+**2.71% of rows**, 1.7 of 64 per step, almost all size-gate failures
+(undersized 0.0267) not unsanitizability (0.0004). Not negligible, so measured.
+
+−1.0 vs −2.0: scaffold **−0.053** (p<1e-4), C **+0.037** (p<1e-4), undersized
+**+0.018** (p=0.0035) — all differ at x8. −4.0 vs −2.0: nothing differs
+(p = 0.60, 0.34, 0.78).
+
+Weakening it hurts, strengthening it does nothing. At −1.0 the penalty is too
+weak to deter gate failure, so undersized molecules more than double and the
+policy buys C by drifting toward exactly what the gate excludes. The inherited
+default now has a reason rather than a provenance.
+
+Your advice to skip it if time was short would have cost this — worth noting the
+cheap item was the one with a real result in it.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-2 · 4.4 is in and it does NOT bite — the control settles it
 **At commit:** `fecd505f` on `brics-generator`
 

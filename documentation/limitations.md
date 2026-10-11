@@ -176,13 +176,42 @@ MC-dropout noise stays flat near 0.95. **SNR crosses 1 between steps 100 and
 150.** Past that the classifier's own uncertainty exceeds the differences it
 reports.
 
-### 2.4 No calibration analysis **[untested]**
-No reliability diagram, no Brier/ECE, on either in- or out-of-distribution
-data. The reward consumes `C(m)` as if it were a probability.
+### 2.4 C(m) is a good ranker and a poor probability **[measured]**
 
----
+Measured 2026-10-11 on the hybrid+GraphNorm test folds, 10 seeds pooled
+(n=1970), and on Wang (n=55).
 
-## 3. The data
+**In distribution: Brier 0.1025, ECE 0.0741, systematically UNDERconfident.**
+Every bin's observed rate exceeds its prediction:
+
+| predicted | n | predicted | actual | gap |
+|---|---|---|---|---|
+| 0.0-0.1 | 234 | 0.048 | 0.132 | +0.084 |
+| 0.2-0.3 | 60 | 0.252 | 0.600 | **+0.348** |
+| 0.4-0.5 | 66 | 0.447 | 0.682 | +0.234 |
+| 0.7-0.8 | 92 | 0.756 | 0.880 | +0.124 |
+| 0.9-1.0 | 957 | 0.967 | 0.975 | +0.008 |
+
+A molecule scoring 0.25 is in fact permeable 60% of the time. The error is
+worst mid-range and nearly absent at the extremes, where most of the mass is.
+
+**But the mapping is monotone** -- 0.13, 0.33, 0.60, 0.67, 0.68, 0.74, 0.82,
+0.88, 0.89, 0.98 -- so **ranking is preserved**. That is what rescues most uses:
+`group_advantages` standardizes within the group, so a monotone distortion of
+level is divided out before the policy sees it, and `postfilter`'s ranking of
+survivors by C is likewise rank-only.
+
+**Where it is NOT rescued: the multi-objective trade.** The reward is
+`w_D*D + w_C*C + w_Q*QED + w_S*SA`, a weighted sum of terms on different
+scales. Understating C by up to 0.35 mid-range understates C's weight relative
+to QED and SA for exactly the molecules that are neither clearly permeable nor
+clearly not. The effective `w_C` is therefore a function of where a molecule
+sits on the scale, which is not what the formulation intends.
+
+**Out of distribution it cannot be characterised.** Wang gives Brier 0.1216,
+ECE 0.0944, but bins hold 4-7 molecules each and the sign of the gap flips
+between adjacent bins. n=55 does not support a reliability diagram; the
+headline ECE is reportable and its shape is not.
 
 ### 3.1 BBBP labels transport, not drug-likeness or safety **[measured]**
 This is the root cause of §1.2. Chloroform, dichloromethane, bromoform,
@@ -209,12 +238,27 @@ which fire on drug-sized aromatic scaffolds; CCl₄'s hepatotoxicity runs
 through CYP2E1 activation, not a Tox21 endpoint. The term is implemented and
 **off by default**; it should not be switched on as-is.
 
-### 3.4 BBBP's `name` column appears misaligned **[suspected]**
-`C=C` is named "ethyl-loflazepate", `C(C)Cl` is named "ethylene(ethene)",
-`C(Cl)Cl` is named "18". SMILES/label pairing looks correct where spot-checked
-(`CCO`/Ethanol, `C1CC1`/Cyclopropane), so this may be confined to the name
-column and to specific rows — but it has not been audited, and nothing should
-rely on that column until it has been.
+### 3.4 BBBP's `name` column is unreliable, and it is not a simple shift **[measured]**
+
+Audited 2026-10-11. The column is corrupt in places: **32 names are bare
+integers** (`40730`, `24`, `18`, ...), and the rows the earlier entry cited are
+confirmed -- `ethyl-loflazepate` carries `C=C` (ethylene, 2 heavy atoms, while
+ethyl loflazepate is a benzodiazepine) and `ethylene(ethene)` carries `C(C)Cl`
+(chloroethane).
+
+**It is not a global off-by-one.** Probing names whose structure is
+unambiguous: `cyclopropane`/`C1CC1`, `dichloromethane`/`ClCCl` and
+`ethanol`/`CCO` are all correctly aligned; only the ethylene region fails. So
+this is localized corruption in specific rows, not a systematic offset that
+could be repaired by shifting the column.
+
+**The exposure is nil**: `grep` over `src/` and `baselines/` finds **no code
+reading the `name` column**. Labels and SMILES are what the pipeline consumes.
+
+**What stays open**: for the corrupt rows it cannot be determined whether the
+NAME or the SMILES is wrong without an external reference, so the possibility
+that a handful of SMILES are also wrong is not excluded -- it is only known
+that nothing downstream reads the column that is visibly broken.
 
 ### 3.5 No toxicity or drug-likeness label matched to the failure **[untested]**
 What §1.2 needs is an "is this a drug" signal (ClinTox `FDA_APPROVED`) or an

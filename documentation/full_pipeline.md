@@ -34,13 +34,19 @@ the objective that causes it. See §9.
 
 ## 2. Quick start
 
-The warm start, the three reward checkpoints and policy seeds 0–2 are all
-committed, so a default run trains only the seven new policy seeds.
+The classifier checkpoints, the MLE warm start, all ten policy-seed runs and
+the screened candidate set are committed. So on a fresh clone of this branch
+every training stage skips and the pipeline only re-derives the read-only
+report:
 
 ```bash
 pip install -r requirements.txt     # requirements.lock pins exact versions
-python -m src.pipeline              # ~1 h: 7 GRPO seeds + screen + report
+python -m src.pipeline --list       # confirm what would skip
+python -m src.pipeline              # ~22 min, trains nothing
 ```
+
+Run `--list` first. It is read-only and tells you exactly which stages have
+artifacts on disk, so you find out what a run will cost before it starts.
 
 Stages whose artifacts already exist are skipped. Resume is by artifact on
 disk, not by a state file, so an interrupted run simply continues.
@@ -51,17 +57,25 @@ disk, not by a state file, so an interrupted run simply continues.
 python -m src.pipeline --force      # ~5 h, retrains the 300-run classifier grid
 ```
 
-Costs, measured on CPU (these graphs are too small for accelerator launch
-overhead to pay off):
+Costs on CPU (these graphs are too small for accelerator launch overhead to pay
+off). The "skipping" column is measured on this branch with every artifact
+present; the "training" column is what `--force` costs.
 
-| stage | work | wall clock |
-|---|---|---|
-| contract | 5 self-checks, cache build, split verification | 41 s |
-| classifier | 300 runs: base 80, edge 60, hybrid 80, hybrid_batch 80 | ~4 h |
-| reward | load + verify the frozen ensemble | 10 s |
-| generator | MLE warm start 9 min, then 10 × 6 min GRPO | ~1.2 h |
-| screen | pool, screen, score, rank | <1 min |
-| report | holdout eval, aggregation, paired analysis | ~20 min |
+| stage | work | skipping | training |
+|---|---|---|---|
+| contract | 5 self-checks, cache build, split verification | 41 s | 41 s |
+| classifier | 300 runs: base 80, edge 60, hybrid 80, hybrid_batch 80 | 17 s | ~4 h |
+| reward | load + verify the frozen ensemble | 10 s | 10 s |
+| generator | MLE warm start, then 10 GRPO runs | <1 s | 2416 s measured for 7 |
+| screen | pool 19219, screen, score, rank | 239 s | 239 s |
+| report | holdout eval, aggregation, paired analysis | ~18 min | ~18 min |
+
+`contract`, `reward` and `report` always run — the first two are gates and the
+third is read-only aggregation. `screen` re-runs whenever its output is absent.
+
+The generator figure is the honest one: 2416 s trained seeds 3–9 at ~345 s each,
+against the ~6 min/run the generator doc quotes. The difference is thread
+contention from other work on the machine, not a configuration change.
 
 ---
 
@@ -176,6 +190,17 @@ not more policy seeds.
 Output goes to `results/candidates/brics10/`. The earlier two-run screen is
 preserved at `results/candidates/brics/`.
 
+**The screen is reproducible only at a pinned thread count**, and this was a
+real bug in the first version of `pipeline.py`. `run_all` calls
+`torch.set_num_threads` in-process, so `screen` inherited 6 threads after a full
+run and the machine default (18 on this box) when invoked with `--only screen`
+— and `screened.csv`'s `c_score` column then differed in 59 of 19219 rows.
+Ranking was unaffected (Spearman 1.0 to 8 decimals, identical top 25), so
+nothing downstream was wrong, but a frozen reward that answers differently in
+two runs is precisely the hazard GraphNorm removed from the classifier. The
+pipeline now pins threads once at entry, before any stage. Two pinned runs are
+byte-identical; the committed artifact is at `threads=6`.
+
 ### report
 Read-only. `eval_external_holdout` → `collect_all` → `paired_analysis`.
 `master_comparison.csv` now carries a `norm` column, because `hybrid` and
@@ -220,12 +245,12 @@ indistinguishable, and why both HRM and the motif model failed.
 | component | measured | n |
 |---|---|---|
 | assembly reconstruction | **2039/2039 exact** | full BBBP |
-| sanitization, trained policy | 0.9997 ± 0.0001 | 3 policy seeds |
+| sanitization, trained policy | 0.9996 ± 0.0001 SEM | 10 policy seeds |
 | sanitization, untrained policy | 0.9539 | 2560 samples |
 | scaffold diversity at the settled point | **0.8541 ± 0.0059 SEM** (sd 0.0186) | **10 policy seeds** |
-| exact-duplicate freedom | 0.9821 ± 0.0030 SEM | 3 policy seeds |
-| classifier term `C` | 0.8824 ± 0.0056 SEM | 3 policy seeds |
-| total reward | 2.1517 ± 0.0123 SEM | 3 policy seeds |
+| exact-duplicate freedom | 0.9822 ± 0.0011 SEM | 10 policy seeds |
+| classifier term `C` | 0.8863 ± 0.0025 SEM | 10 policy seeds |
+| total reward | 2.1548 ± 0.0051 SEM | 10 policy seeds |
 | instrument gap `C(BBBP) − C(B3DB)` | **+0.0381 ± 0.0155** vs real drugs' +0.0373; SELFIES +0.0551, Welch p = 0.003; per-sample ranges overlap | 12 |
 
 ### The seed bump, and what it changed
@@ -249,6 +274,23 @@ the two figures are commensurable and the move is real rather than an artefact
 of recomputing it differently.
 
 **Report 0.854 ± 0.006.** Per-seed values span 0.830 to 0.887.
+
+**Scaffold was the only statistic that moved.** Recomputed over the same ten
+runs, everything else in the table above lands on its 3-seed value:
+
+| | n=3 | n=10 | moved? |
+|---|---|---|---|
+| sanitization | 0.9997 | 0.9996 | no |
+| exact-duplicate freedom | 0.9821 | 0.9822 | no |
+| classifier term `C` | 0.8824 | 0.8863 | +0.004, <0.5 sd |
+| total reward | 2.1517 | 2.1548 | no |
+| **scaffold diversity** | **0.8643** | **0.8541** | **−0.010, 0.55 sd** |
+
+So the three-seed sample was not broadly optimistic — it was unlucky on one
+axis, the one with by far the largest relative spread (sd 0.019 against
+0.0003–0.016 for the rest). That is the axis where a small n costs you, and it
+is also the axis the reward does not control, which is why it is the one worth
+spending seeds on.
 
 ---
 

@@ -413,6 +413,20 @@ def main() -> None:
     if args.list:
         return show_plan()
 
+    # Pin the thread count ONCE, before any stage, and for every stage.
+    # OpenMP changes the order of float reductions, so it is part of the run
+    # identity -- which is why each generator run records it in config.json.
+    # Pinning it here rather than per stage fixes a real bug: `run_all` sets it
+    # in-process, so `screen` inherited 6 threads after a full run and the
+    # machine default (18 here) when run alone, and `screened.csv`'s c_score
+    # column changed in 59 of 19219 rows depending on which stages preceded it.
+    # Ranking was unaffected (Spearman 1.0, identical top 25) but a frozen
+    # reward that answers differently in two runs is the hazard this repo
+    # removed from the classifier, and it does not belong here either.
+    import torch
+    torch.set_num_threads(THREADS)
+    print(f"threads pinned to {THREADS} (torch reports {torch.get_num_threads()})")
+
     if args.only:
         selected = [s for s in STAGES if s[0] == args.only]
     elif args.from_stage:

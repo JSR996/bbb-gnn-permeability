@@ -62,13 +62,23 @@ import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 SCREENED = ROOT / "results" / "candidates" / "brics10" / "screened.csv"
-OUT = ROOT / "results" / "pubchem" / "existence.csv"
+OUT = ROOT / "results" / "pubchem" / "existence.csv"          # raw query log
+CLASSIFIED = ROOT / "results" / "pubchem" / "classified_all.csv"
+SURVIVORS_OUT = ROOT / "results" / "pubchem" / "classified_survivors.csv"
+SUMMARY = ROOT / "results" / "pubchem" / "summary.csv"        # both populations
 
 BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound"
-MAX_RPS = 5.0        # PubChem's published ceiling. Theirs, not a tuning knob.
-WORKERS = 5
+MAX_RPS = 4.0        # under PubChem's published 5/s ceiling, for margin
+WORKERS = 4
 TIMEOUT = 30
-RETRIES = 3
+RETRIES = 6          # throttling is transient; giving up early loses the row
+
+# THE BUCKET IS PER-PROCESS, SO DO NOT RUN TWO OF THESE AT ONCE. Learned the
+# hard way: a census plus a handful of ad-hoc probes from another process each
+# honoured 5 req/s locally, exceeded it jointly at PubChem, and 86 of the first
+# 450 rows came back `retries_exhausted` -- a 19% loss that looked like network
+# flakiness and was self-inflicted. Finish or stop the census before running
+# any other query against PubChem.
 
 
 class _Bucket:
@@ -88,6 +98,53 @@ class _Bucket:
             time.sleep(wait)
 
 
+BATCH = 150          # InChIKeys per POST; ~4 KB of body, well within limits
+
+
+def lookup_batch(keys: list[str], bucket: _Bucket) -> dict[str, int]:
+    """{inchikey: cid} for the keys PubChem knows. Absent keys are absent.
+
+    WHY BATCHED, AND WHY BY InChIKey. One GET per molecule is the obvious
+    implementation and it is the wrong shape for this API: 19219 requests at
+    ~1.3 s latency needs five workers just to reach 4 req/s, and running that
+    alongside anything else got this client HTTP 429'd outright. PubChem
+    accepts a comma-separated list, which turns the same census into ~130
+    requests.
+
+    It has to be the `property` endpoint, not `cids`. A batched `/cids/JSON`
+    returns one flat CID list with NO correspondence to the inputs, so there is
+    no way to tell which key matched -- the mapping is the whole point. Asking
+    for the InChIKey property back gives CID and key on the same row.
+
+    Sent as POST because 150 keys is ~4 KB, far past what a GET URL takes.
+    """
+    body = {"inchikey": ",".join(keys)}
+    url = f"{BASE}/inchikey/property/InChIKey/JSON"
+    for attempt in range(RETRIES):
+        bucket.take()
+        try:
+            r = requests.post(url, data=body, timeout=TIMEOUT)
+        except requests.RequestException:
+            if attempt == RETRIES - 1:
+                raise
+            time.sleep(min(2 ** attempt + 1, 30))
+            continue
+        if r.status_code == 404:
+            return {}                      # none of these keys is registered
+        if r.status_code in (429, 503):
+            time.sleep(min(2 ** attempt + 1, 30))
+            continue
+        r.raise_for_status()
+        props = r.json().get("PropertyTable", {}).get("Properties", [])
+        out: dict[str, int] = {}
+        for p in props:
+            k, c = p.get("InChIKey"), p.get("CID")
+            if k and c and k not in out:   # keep the lowest CID per key
+                out[k] = c
+        return out
+    raise RuntimeError(f"batch of {len(keys)} exhausted retries")
+
+
 def lookup(smiles: str, bucket: _Bucket) -> dict:
     """-> {smiles, n_cids, cid, status}. cid is the lowest, i.e. oldest, match."""
     enc = urllib.parse.quote(smiles, safe="")
@@ -104,7 +161,9 @@ def lookup(smiles: str, bucket: _Bucket) -> dict:
         if r.status_code == 404:          # PubChem's "no match" for a structure
             return dict(smiles=smiles, n_cids=0, cid="", status="notfound")
         if r.status_code in (429, 503):   # throttled or busy -- back off, retry
-            time.sleep(2 ** attempt + 1)
+            # PubChem's own guidance is to slow down rather than hammer. Capped
+            # so one bad patch cannot stall a worker for minutes.
+            time.sleep(min(2 ** attempt + 1, 30))
             continue
         if r.status_code != 200:
             return dict(smiles=smiles, n_cids=0, cid="", status=f"http{r.status_code}")
@@ -133,6 +192,68 @@ def pool(survivors_only: bool = False) -> pd.DataFrame:
     return (d[d.passes & ~d.in_training_flat] if survivors_only else d).copy()
 
 
+def inchikeys(smiles: list[str]) -> dict[str, str]:
+    """Computed locally with RDKit -- no network. 19219/19219 succeed."""
+    from rdkit import Chem, RDLogger
+    from rdkit.Chem.inchi import MolToInchiKey
+    RDLogger.DisableLog("rdApp.*")
+    out = {}
+    for s in smiles:
+        m = Chem.MolFromSmiles(s)
+        if m is None:
+            continue
+        try:
+            k = MolToInchiKey(m)
+        except Exception:
+            continue
+        if k:
+            out[s] = k
+    return out
+
+
+def run_batched(limit: int | None = None, seed: int = 0,
+                survivors_only: bool = False) -> pd.DataFrame:
+    s = pool(survivors_only)
+    if limit:
+        s = s.sample(min(limit, len(s)), random_state=seed)
+
+    keys = inchikeys(list(s.smiles))
+    missing = [x for x in s.smiles if x not in keys]
+    print(f"{len(s)} molecules, {len(keys)} InChIKeys computed"
+          + (f", {len(missing)} unkeyable" if missing else ""))
+
+    uniq = sorted(set(keys.values()))
+    n_req = (len(uniq) + BATCH - 1) // BATCH
+    print(f"{len(uniq)} distinct keys -> {n_req} POSTs of {BATCH} "
+          f"(~{n_req / MAX_RPS:.0f}s of requests)")
+
+    bucket = _Bucket(MAX_RPS)
+    found: dict[str, int] = {}
+    t0 = time.time()
+    for i in range(0, len(uniq), BATCH):
+        chunk = uniq[i:i + BATCH]
+        found.update(lookup_batch(chunk, bucket))
+        done = min(i + BATCH, len(uniq))
+        print(f"  {done}/{len(uniq)} keys, {len(found)} registered, "
+              f"{time.time() - t0:.0f}s")
+
+    rows = []
+    for smi in s.smiles:
+        k = keys.get(smi)
+        if k is None:
+            rows.append(dict(smiles=smi, inchikey="", n_cids=0, cid="",
+                             status="unkeyable"))
+            continue
+        cid = found.get(k)
+        rows.append(dict(smiles=smi, inchikey=k, n_cids=1 if cid else 0,
+                         cid=cid or "", status="hit" if cid else "notfound"))
+    df = pd.DataFrame(rows)
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(OUT, index=False)
+    print(f"\nwrote {OUT} ({len(df)} rows)")
+    return df
+
+
 def run(limit: int | None = None, seed: int = 0,
         survivors_only: bool = False) -> pd.DataFrame:
     s = pool(survivors_only)
@@ -142,8 +263,17 @@ def run(limit: int | None = None, seed: int = 0,
     OUT.parent.mkdir(parents=True, exist_ok=True)
     done: set[str] = set()
     if OUT.exists():
-        done = set(pd.read_csv(OUT).smiles)
-        print(f"resuming: {len(done)} already queried")
+        prev = pd.read_csv(OUT)
+        # Only RESOLVED queries count as done. A throttled or timed-out lookup
+        # must be retried, or transient network failures silently become
+        # permanent "unresolved" rows and the denominators drift.
+        resolved = prev[prev.status.isin(["hit", "notfound"])]
+        done = set(resolved.smiles)
+        stale = len(prev) - len(resolved)
+        print(f"resuming: {len(done)} resolved"
+              + (f", {stale} failed and will be retried" if stale else ""))
+        if stale:
+            resolved.to_csv(OUT, index=False)   # drop the failures, then re-add
 
     todo = [x for x in s.smiles if x not in done]
     print(f"{len(s)} survivors, {len(todo)} to query, "
@@ -153,7 +283,7 @@ def run(limit: int | None = None, seed: int = 0,
         return pd.read_csv(OUT)
 
     bucket = _Bucket(MAX_RPS)
-    new = not OUT.exists()
+    new = not OUT.exists() or OUT.stat().st_size == 0
     t0 = time.time()
     with OUT.open("a", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["smiles", "n_cids", "cid", "status"])
@@ -191,53 +321,88 @@ def classify(df: pd.DataFrame) -> pd.DataFrame:
     return m
 
 
-def report(df: pd.DataFrame) -> None:
-    m = classify(df)
+ORDER = ["training", "known", "novel", "unresolved"]
+LABEL = {"training": "in its training data",
+         "known": "exist already (PubChem), not in training",
+         "novel": "no record found -- novel",
+         "unresolved": "lookup failed (NOT an absence)"}
+
+
+def _summarize(m: pd.DataFrame, title: str, note: str = "") -> pd.DataFrame:
+    """Print one population's three-way split and return it as a frame."""
     n = len(m)
-    print(f"\n{'=' * 70}\nWHERE THE GENERATED MOLECULES COME FROM\n{'=' * 70}")
-    print(f"  queried: {n} deduplicated generated molecules\n")
-    order = ["training", "known", "novel", "unresolved"]
-    label = {"training": "in its training data",
-             "known": "exist already (PubChem), not in training",
-             "novel": "no record found -- novel",
-             "unresolved": "lookup failed (NOT an absence)"}
-    counts = m.bucket.value_counts()
-    for b in order:
-        c = int(counts.get(b, 0))
+    res = m[m.bucket != "unresolved"]
+    print(f"\n{'-' * 70}\n{title}  (n={n})\n{'-' * 70}")
+    if note:
+        print(f"  {note}\n")
+    rows = []
+    for b in ORDER:
+        c = int((m.bucket == b).sum())
         if b == "unresolved" and not c:
             continue
-        print(f"  {label[b]:<44} {c:>6}  {c / n:>6.1%}")
-
-    res = m[m.bucket != "unresolved"]
-    if len(res) and len(res) != n:
-        print(f"\n  over resolved only (n={len(res)}):")
-        for b in order[:3]:
-            c = int((res.bucket == b).sum())
-            print(f"    {label[b]:<42} {c:>6}  {c / len(res):>6.1%}")
-
-    # Binomial interval on the novel fraction, since that is the headline and
-    # it is a proportion from a finite sample of the policy's output.
+        of_res = c / len(res) if (len(res) and b != "unresolved") else float("nan")
+        rows.append(dict(population=title, bucket=b, n=c,
+                         share_of_all=c / n if n else float("nan"),
+                         share_of_resolved=of_res))
+        extra = f"   ({of_res:.1%} of resolved)" if len(res) != n and b != "unresolved" else ""
+        print(f"  {LABEL[b]:<44} {c:>6}  {c / n:>6.1%}{extra}")
     if len(res):
         p = (res.bucket == "novel").mean()
         se = (p * (1 - p) / len(res)) ** 0.5
-        print(f"\n  novel fraction: {p:.1%} +/- {1.96 * se:.1%} (95%)")
+        print(f"\n  novel fraction: {p:.1%} +/- {1.96 * se:.1%} (95%, n={len(res)})")
+    return pd.DataFrame(rows)
 
+
+def report(df: pd.DataFrame, write: bool = True) -> None:
+    m = classify(df)
+    print(f"\n{'=' * 70}\nWHERE THE GENERATED MOLECULES COME FROM\n{'=' * 70}")
+
+    # A PARTIAL CENSUS IS NOT A SAMPLE. The census walks the pool file in order,
+    # and that order is not random with respect to the answer: training-set
+    # matches run at 44.4% in the first eighth of the file and 0.5% in the last.
+    # A run stopped early therefore overstates the training bucket several-fold
+    # -- 32.9% against the true figure at 362/19219 queried. Refuse to present
+    # it as a result.
+    total = len(pd.read_csv(SCREENED))
+    if len(m) < total:
+        print(f"\n  *** INCOMPLETE: {len(m)}/{total} queried "
+              f"({len(m) / total:.1%}). These numbers are NOT a valid sample. ***")
+        print("  The pool file is ordered with training-set matches concentrated")
+        print("  at the top (44.4% in the first eighth, 0.5% in the last), so a")
+        print("  partial census overstates the training bucket. Finish the run,")
+        print("  or use --limit N, which samples at random, before quoting it.")
+
+    pool_sum = _summarize(
+        m, "ALL GENERATED",
+        "every deduplicated molecule the ten policy seeds produced")
+
+    # Survivors are a SUBSET of the pool, so this needs no extra queries. The
+    # training bucket is necessarily zero here: postfilter removes those, which
+    # is the whole point of the screen. Quote this population's novel rate only
+    # against its own denominator.
     sv = m[m.passes.fillna(False).astype(bool) &
            ~m.in_training_flat.fillna(False).astype(bool)]
-    if len(sv):
-        sr = sv[sv.bucket != "unresolved"]
-        if len(sr):
-            print(f"\n  among the {len(sv)} screened survivors "
-                  f"(training-set matches already removed):")
-            for b in ("known", "novel"):
-                c = int((sr.bucket == b).sum())
-                print(f"    {label[b]:<42} {c:>6}  {c / len(sr):>6.1%}")
+    surv_sum = _summarize(
+        sv, "SCREENED SURVIVORS",
+        "after size, structural, alert and training-set screening. The "
+        "training bucket is\n  zero by construction -- those were removed to "
+        "form this set.")
+
+    if write and len(m):
+        OUT.parent.mkdir(parents=True, exist_ok=True)
+        pd.concat([pool_sum, surv_sum], ignore_index=True).to_csv(
+            SUMMARY, index=False)
+        m.to_csv(CLASSIFIED, index=False)
+        sv.to_csv(SURVIVORS_OUT, index=False)
+        print(f"\nwrote {SUMMARY.name}, {CLASSIFIED.name}, {SURVIVORS_OUT.name} "
+              f"in {OUT.parent}")
 
     print("\n  A PubChem hit means the structure is registered. It is evidence")
     print("  the generator makes real chemistry, and evidence AGAINST novelty.")
     print("  It is NOT evidence of permeability, activity or safety. 'Novel'")
     print("  means absent from PubChem and the training corpus -- not that the")
-    print("  molecule is unknown to every database, nor that it is any good.")
+    print("  molecule is unknown to every database, nor that it is any good:")
+    print("  the novel bucket contains a trioxide no alert catalogue flags.")
 
 
 def _self_check() -> None:
@@ -312,13 +477,18 @@ def main() -> None:
                          "goes to zero by construction")
     ap.add_argument("--self-check", action="store_true")
     ap.add_argument("--report-only", action="store_true", help="re-print from the CSV")
+    ap.add_argument("--serial", action="store_true",
+                    help="one GET per molecule instead of batched POSTs. "
+                         "~130x the requests; kept only for cross-checking "
+                         "the batched path against a sample")
     args = ap.parse_args()
     if args.self_check:
         return _self_check()
     if args.report_only:
         return report(pd.read_csv(OUT))
-    report(run(limit=args.limit, seed=args.seed,
-               survivors_only=args.survivors_only))
+    go = run if args.serial else run_batched
+    report(go(limit=args.limit, seed=args.seed,
+              survivors_only=args.survivors_only))
 
 
 if __name__ == "__main__":

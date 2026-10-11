@@ -263,14 +263,26 @@ the item, threshold x6 = 0.0083; the two significant results clear it by >10
 orders of magnitude and the BBBP reference clears it at 0.0042.
 
 **The reward-headroom explanation was tested and is EXCLUDED.** The proposed
-mechanism was that B3DB's reward has more room left to climb — real molecules
-average C 0.663 under the B3DB ensemble against 0.755 under BBBP's — so its
-policy climbs further (+0.305 vs +0.112) and pays diversity for the climb.
+mechanism was that B3DB's reward has more room left to climb, so its policy
+climbs further (+0.305 vs +0.112) and pays diversity for the climb.
+
+Headroom, measured on the **full corpora** rather than a sample, because two
+independent 300-molecule draws disagreed by 0.039 (a 300-draw carries SEM
+~0.020 on this statistic, so that gap is ~2 SEM and expected):
+
+| | n | mean C on real molecules | frac > 0.95 |
+|---|---|---|---|
+| BBBP | 2039 | **0.7576** | 0.4453 |
+| B3DB | 7805 | **0.6554** | 0.3280 |
+
+Definitive gap **0.1022**. (The two sampled estimates were 0.092 and 0.135 —
+quoting either unqualified was a mistake on both sides.)
 
 Tested on the `--reward-seed` axis, which moves BBBP headroom independently of
-the dataset. Seed 1 has the most headroom (real-molecule C 0.688), seed 5 the
-least (0.787); that 0.098 span exceeds the 0.092 BBBP→B3DB gap that produced
-the effect. Three GRPO seeds each, kl=1.0, ws0, 250 steps
+the dataset — the right isolation, since weakening the ensemble instead would
+confound headroom with model capacity. Seed 1 has the most headroom
+(real-molecule C 0.688), seed 5 the least (0.787). That **0.099 span covers 97%
+of the definitive gap**. Three GRPO seeds each, kl=1.0, ws0, 250 steps
 (`results/brics_headroom/`):
 
 | reward seed | headroom | C climb | scaffold delta |
@@ -291,7 +303,9 @@ requires, that climbing costs diversity, does not follow at all.
 
 This is an exclusion rather than a null: the difference is +0.003 with a 95% CI
 of [−0.037, +0.043], while the predicted effect scaled to this headroom span is
-**−0.217**, which the CI excludes by 15.8 SEM.
+**−0.198**, which the CI excludes and which sits **14.3 SEM** from the observed
+value. The exclusion holds on either sampled estimate of the gap too (8.3 SEM on
+one, 5.7 on the other), so it does not depend on which measurement is used.
 
 So B3DB's behaviour is not explained by how saturated its reward is. Candidates
 not yet excluded include corpus size (7805 vs 2039 molecules), action-space size

@@ -73,7 +73,7 @@ different seeds have trained on each other's held-out molecules.
 | exact-duplicate freedom | 0.9821 +/- 0.0030 SEM | 3 GRPO seeds |
 | classifier term `C` | 0.8824 +/- 0.0056 SEM | 3 GRPO seeds |
 | total reward | 2.1517 +/- 0.0123 SEM | 3 GRPO seeds |
-| instrument gap `C(BBBP) - C(B3DB)` | **+0.0381 +/- 0.0155** vs real drugs' +0.0373; SELFIES +0.0551, Welch p = 0.003 | 12 |
+| instrument gap `C(BBBP) - C(B3DB)` | **+0.0381 +/- 0.0155** vs real drugs' +0.0373; SELFIES +0.0551, Welch p = 0.003 (0.010 Bonferroni over 3 hypotheses); per-sample ranges overlap | 12 |
 | screened candidate set | **1746 survivors / 5888 pooled (30%)** | 2 runs |
 
 The three-seed figures are the headline. `scaffold 0.864` was first measured as a

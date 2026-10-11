@@ -218,19 +218,41 @@ overlap and an individual BRICS sample can be further from the real reference
 than an individual SELFIES one.
 
 **What survives is the mean difference, and it is still the strongest result in
-this report.** Welch t = -3.49, **p = 0.0034**, robust to leave-one-out
-(p = 0.0005 to 0.0078 dropping any single BRICS point). Mean |gap - real| is
-0.0126 for BRICS against 0.0178 for SELFIES, and BRICS' mean lands 0.0009 from
-the real-drug reference. So: *BRICS' instrument gap is significantly closer to
-real drugs on average, though the per-sample distributions overlap.* Not a
-categorical separation.
+this report.** Welch t = -3.49, **p = 0.0034**, and it survives both exposures
+this data has:
 
-**BRICS is also the less consistent arm on this axis** — sd 0.0155 against
-0.0065, a variance ratio of 5.74 with Levene (median-centred) p = 0.037, and
-unlike the retracted agreement-variance claim this one holds under
-leave-one-out (4.04 at worst). Marginal at n=12 and stated as such, but it is
-the opposite of the diversity axis, where BRICS needed the tuned coefficient and
-SELFIES was the robust one.
+| exposure | adjustment | result |
+|---|---|---|
+| sensitivity to one point | leave-one-out, any single BRICS sample dropped | p = 0.0005 - 0.0078 |
+| repeated interrogation | Bonferroni over the 3 hypotheses tested on these samples | **p = 0.010** |
+| | conservative x8 | **p = 0.027** |
+
+Mean \|gap - real\| is 0.0126 for BRICS against 0.0178 for SELFIES, and BRICS'
+mean lands 0.0009 from the real-drug reference. So: *BRICS' instrument gap is
+significantly closer to real drugs on average, though the per-sample
+distributions overlap.* Not a categorical separation.
+
+**State the family when quoting the adjusted figure.** Three distinct hypotheses
+were tested on these 12+12 samples — means differ, variances differ, ranges
+non-overlap. Leave-one-out re-runs are robustness checks of the first, not new
+hypotheses, and the thread's other tests (p95 ratios, seed agreement) were on
+different data. A x20 correction counting every test run anywhere in the thread
+would give p = 0.068 and fail, but that count is wrong for this family. The
+claim holds to x12.
+
+**BRICS also looks like the less consistent arm on this axis, but that is an
+observation and not a result.** sd 0.0155 against 0.0065, ratio 5.74, Levene
+median-centred p = 0.037, and it does hold under leave-one-out (4.04 at worst)
+where the retracted agreement-variance claim collapsed. It still **does not
+survive multiplicity**: 0.111 at x3, 0.296 at x8. No p-value should appear next
+to it.
+
+Two things that are easy to conflate and are not the same: leave-one-out tests
+sensitivity to a single point, multiplicity tests exposure to repeated
+interrogation. This observation passes the first and fails the second. And its
+being flagged by one party and confirmed by the other is not independent
+evidence — both looked at the same twelve numbers. Confirming it needs samples
+not already used to find it.
 
 **D_real is confounded and is NOT usable here.** The numbers above (BRICS
 0.931-0.947, SELFIES 0.710-0.800, real drugs 0.940) look like BRICS closing the

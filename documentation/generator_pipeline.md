@@ -256,6 +256,33 @@ benzhydryl-piperazines — which is what recombining BRICS fragments of CNS drug
 should produce. Constitutional novelty is screened; scaffold novelty is reported,
 not enforced.
 
+**The top 25 are the greasy extreme of the survivor set, and that is a property
+of the ranking rather than of the generator.** Measured against real BBB+ drugs
+on CNS-MPO (the Wager desirability set over logP / TPSA / MW / HBD, in
+`cns_mpo_reward.py`):
+
+| set | n | CNS-MPO | vs real |
+|---|---|---|---|
+| real BBB+ drugs | 600 | 0.753 +/- 0.007 | — |
+| **all 1746 survivors** | 1746 | **0.752 +/- 0.005** | AUC 0.495, p = 0.87 |
+| top 25 by `C` | 25 | 0.598 +/- 0.033 | AUC 0.754, p = 9e-05 |
+
+**The survivor set as a whole is indistinguishable from real drugs on this
+axis.** The top 25 are not: logP 4.44 against the survivors' 2.95, TPSA 22.1
+against 47.1, MW 369 against 308, HBD 0.32 against 0.82 (all p < 1e-3). A random
+25 survivors score 0.752 with a 95% interval of [0.680, 0.818], so 0.598 is
+outside it.
+
+Ranking by **absolute `C`** selects the greasy extreme. The relationship is
+invisible globally — Spearman(C, CNS-MPO) = −0.032, p = 0.18 across all
+survivors — because it is confined to roughly the top 1% that the ranking picks.
+
+Consequence for anyone reading `candidates.csv`: **those 25 rows are not
+representative of the 1746.** If the intended use is a property-balanced
+shortlist, rank on something other than absolute `C`, or report CNS-MPO
+alongside it. No reward-side change is implied; the generator's output is
+already real-drug-like on these four properties.
+
 ## 5. What the output is not
 
 - **Not synthesis candidates.** Every survivor is a hypothesis for evaluation.

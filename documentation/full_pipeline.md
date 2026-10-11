@@ -392,6 +392,47 @@ signature.
 If the intended use is a property-balanced shortlist, rank on something other
 than absolute `C`, or report CNS-MPO alongside it.
 
+### Scored by a classifier the generator never saw
+
+`screened.csv`'s `c_score` comes from the gin/gat/gine GraphNorm ensemble the
+generator was *optimized against*, so a high value says the policy hit its own
+target — close to tautological, and blind to reward hacking by construction.
+The informative test scores the same molecules with the **reported** classifier
+(`hybrid_batch/gcn`, 10 seeds, descriptors the reward model never sees, a
+different norm, averaged over ten splits). Nothing in GRPO consulted it.
+`src/independent_score.py`.
+
+| population | independent judge | >0.5 |
+|---|---|---|
+| real BBB+ (control) | 0.889 ± 0.175 | 94.7% |
+| **generated survivors** | **0.825 ± 0.219** | **88.9%** |
+| real BBB− (control) | 0.197 ± 0.187 | 8.8% |
+
+The judge discriminates (0.889 vs 0.197), and generated molecules sit near real
+BBB+ and nowhere near BBB−. Against the reward's own 0.854 on the same set, the
+mean optimism is **+0.029**.
+
+**Where reward hacking would show up, it doesn't.** If the policy had learned
+this ensemble's blind spots, the exploits would concentrate in the top-ranked
+molecules, because that is what it was pushed toward. Measured over the 250
+highest `c_score` survivors: mean gap **+0.008**, and **0 molecules** with a
+gap above 0.3. Across all 6591 the median gap is +0.004, with 5.55% optimistic
+by >0.3 against 1.32% pessimistic by >0.3 — a roughly symmetric spread of two
+models disagreeing, not a systematic exploit. Agreement is pearson +0.764,
+spearman +0.713.
+
+**What this does and does not rule out.** It rules out *ensemble-specific*
+hacking: the permeability signal is not an artefact of the particular reward
+members. It does **not** touch the objective problem, because both classifiers
+share the same label semantics — the independent judge scores carbon
+tetrachloride at **1.000**, above caffeine's 0.976. Two models trained on BBBP
+agree that solvents cross membranes, because they do. Independence of
+architecture and fold is not independence of the question being asked.
+
+BatchNorm is safe as a judge and unsafe as a reward: in `.eval()` it uses
+running statistics, verified batch-independent to 6e-08, so a molecule's score
+does not depend on its batch. See §4.
+
 ### Training data, already known, or novel
 
 Every one of the 19219 generated molecules resolved against PubChem's full

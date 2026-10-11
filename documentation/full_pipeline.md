@@ -392,6 +392,55 @@ signature.
 If the intended use is a property-balanced shortlist, rank on something other
 than absolute `C`, or report CNS-MPO alongside it.
 
+### Two rewards, two arms: the generator does not depend on its judge
+
+The pipeline has two classifiers (§4), and the generator was originally trained
+against only one. A second arm trains against the other — `--reward-family
+hybrid_batch`, ten policy seeds, matched on everything else (kl=1.0, 250 steps,
+group 64, same warm start, reward seed 0, same seeds), so the comparison is
+paired by seed and only the judge differs.
+
+**Paired over 10 seeds, nothing meaningful separates them:**
+
+| metric | A − B | p |
+|---|---|---|
+| scaffold diversity | +0.0025 | 0.73 |
+| validity | −0.0001 | 0.94 |
+| uniqueness | −0.0006 | 0.65 |
+| Tanimoto distance | −0.0018 | **0.007** |
+
+Only Tanimoto separates. It survives Bonferroni over four tests and is a 0.2%
+relative effect, so it is real and unimportant.
+
+**Screening and provenance are near-identical:**
+
+| | arm A (ensemble) | arm B (hybrid_batch) |
+|---|---|---|
+| pooled → survivors | 19219 → 6591 (34%) | 20082 → 6848 (34%) |
+| in training data | 9.1% | 8.7% |
+| exist already | 18.9% | 19.1% |
+| novel | 72.0% | 72.2% |
+| survivors: known / novel | 31.4% / 68.6% | 31.4% / 68.6% |
+
+**The 2×2 that detects reward hacking.** Each cell as a fraction of that
+reward's own real-BBB+ control — necessary because `hybrid_batch` is globally
+more conservative (real BBB+ 0.866 vs 0.908), so an arm's raw drop when moving
+rewards is mostly that offset rather than anything about the arm:
+
+| | R = ensemble | R = hybrid_batch |
+|---|---|---|
+| **A**: trained on ensemble | **0.941** ← in-loop | 0.929 |
+| **B**: trained on hybrid_batch | 0.931 | **0.936** ← in-loop |
+| real BBB+ (raw) | 0.9081 | 0.8662 |
+| real BBB− (raw) | 0.2625 | 0.1673 |
+
+**In-loop advantage is +0.010 on one reward and +0.007 on the other.** Each arm
+scores under the reward it never saw almost exactly as well as the arm trained
+on it, and Spearman between the two rewards is +0.71 on both arms. If either
+reward were being exploited, its off-diagonal would collapse. It does not.
+
+Run it with `python -m src.cross_reward`.
+
 ### Scored by a classifier the generator never saw
 
 `screened.csv`'s `c_score` comes from the gin/gat/gine GraphNorm ensemble the

@@ -42,8 +42,12 @@ report:
 ```bash
 pip install -r requirements.txt     # requirements.lock pins exact versions
 python -m src.pipeline --list       # confirm what would skip
-python -m src.pipeline              # ~22 min, trains nothing
+python -m src.pipeline              # ~5 min, trains nothing
 ```
+
+Measured: 5m 4s end to end, of which the screen is 232 s. It is reproducible —
+two consecutive runs leave `screened.csv` byte-identical, and the working tree
+clean.
 
 Run `--list` first. It is read-only and tells you exactly which stages have
 artifacts on disk, so you find out what a run will cost before it starts.
@@ -68,7 +72,7 @@ present; the "training" column is what `--force` costs.
 | reward | load + verify the frozen ensemble | 10 s | 10 s |
 | generator | MLE warm start, then 10 GRPO runs | <1 s | 2416 s measured for 7 |
 | screen | pool 19219, screen, score, rank | 239 s | 239 s |
-| report | holdout eval, aggregation, paired analysis | ~18 min | ~18 min |
+| report | holdout eval, aggregation, paired analysis | ~25 s | ~25 s |
 
 `contract`, `reward` and `report` always run — the first two are gates and the
 third is read-only aggregation. `screen` re-runs whenever its output is absent.

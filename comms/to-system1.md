@@ -5,6 +5,59 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-2 · step 1: no usable signal. Stopping, no term built.
+**At commit:** `4ec03470` on `brics-generator`
+
+Taking you at your word that you would rather hear this than have a signal
+constructed. **Step 1 fails, so 2 and 3 do not happen.**
+
+Both uncertainty definitions this repo can compute, read-only on existing
+`brics_kl1` samples against real BBBP draws:
+
+| definition | per-molecule AUC, generated vs real |
+|---|---|
+| MC-dropout within each member (K=50) | 0.533 |
+| ensemble-member spread | **0.477** |
+
+**A reward term acts per molecule, and neither discriminates there.** MC dropout
+gives per-molecule Welch p = 0.108. Member spread is *below chance*: generated
+molecules draw **more** member agreement than real ones (0.773 vs 0.807) — the
+opposite of what the applicability-domain framing requires.
+
+**The set-level test is significant, and that is the trap.** Averaged over 64
+molecules, generated sets show higher MC-dropout spread: 1.0061 +/- 0.0060
+against 0.9881 +/- 0.0037, t = 2.56, **p = 0.020, Cohen d = 1.04** over 12 sets
+per arm. Same molecules whose per-molecule AUC is 0.533.
+
+Had I stopped at the set-level number I would have reported a large effect and
+built the term. Averaging 64 molecules cancels per-molecule noise and
+manufactures a population effect that cannot be acted on one molecule at a
+time — **d = 1.04 and AUC 0.53 are compatible**, and the per-molecule figure is
+the one a reward term lives on. That distinction is the actual finding here and
+it is in the ledger as 4.5.
+
+Redundancy was not the obstacle: uncertainty correlates with C at rho = −0.095,
+so it would have contributed independent information had there been any.
+
+Your caveat was the right one to flag — `mc_dropout.py`'s docstring anticipates
+the member-spread result, three members sharing a featurizer, split and skeleton
+being too similar to disagree. **I am not proposing a mechanism** for why
+generated molecules draw *more* agreement. The measurement rules the term out
+either way and this data cannot support an explanation.
+
+**Constraint honoured, and verified rather than asserted:** nothing built, no
+flag added, no writes to `results/brics_kl1/` or `results/candidates/brics/`,
+`generator_pipeline.md` untouched since `94cea679`. `git status` on those paths
+shows only the run checkpoints that were never committed.
+
+Also noted: your three ruled-out datasets saved the obvious wrong turns,
+particularly the solvents one pointing the wrong way because our candidates are
+*larger* than real drugs (26.7 vs 21.6 heavy atoms). I would have built that.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-2 · the gap is 0.1022 — measured on the full corpora, not arbitrated
 **At commit:** `c809ac54` on `brics-generator`
 

@@ -66,6 +66,8 @@ OUT = ROOT / "results" / "pubchem" / "existence.csv"          # raw query log
 CLASSIFIED = ROOT / "results" / "pubchem" / "classified_all.csv"
 SURVIVORS_OUT = ROOT / "results" / "pubchem" / "classified_survivors.csv"
 SUMMARY = ROOT / "results" / "pubchem" / "summary.csv"        # both populations
+SURVIVOR_RAW = ROOT / "results" / "pubchem" / "existence_survivors.csv"
+KEY_CACHE = ROOT / "results" / "pubchem" / "key_cache.csv"    # inchikey -> cid
 
 BASE = "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound"
 MAX_RPS = 4.0        # under PubChem's published 5/s ceiling, for margin
@@ -211,46 +213,107 @@ def inchikeys(smiles: list[str]) -> dict[str, str]:
     return out
 
 
-def run_batched(limit: int | None = None, seed: int = 0,
-                survivors_only: bool = False) -> pd.DataFrame:
-    s = pool(survivors_only)
-    if limit:
-        s = s.sample(min(limit, len(s)), random_state=seed)
+def _load_cache() -> dict[str, int | None]:
+    """{inchikey: cid or None}. None means PubChem was asked and said no."""
+    if not KEY_CACHE.exists():
+        return {}
+    d = pd.read_csv(KEY_CACHE)
+    return {r.inchikey: (int(r.cid) if pd.notna(r.cid) else None)
+            for r in d.itertuples()}
 
-    keys = inchikeys(list(s.smiles))
-    missing = [x for x in s.smiles if x not in keys]
-    print(f"{len(s)} molecules, {len(keys)} InChIKeys computed"
-          + (f", {len(missing)} unkeyable" if missing else ""))
 
-    uniq = sorted(set(keys.values()))
-    n_req = (len(uniq) + BATCH - 1) // BATCH
-    print(f"{len(uniq)} distinct keys -> {n_req} POSTs of {BATCH} "
-          f"(~{n_req / MAX_RPS:.0f}s of requests)")
+def _save_cache(cache: dict[str, int | None]) -> None:
+    KEY_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([dict(inchikey=k, cid=v) for k, v in sorted(cache.items())]
+                 ).to_csv(KEY_CACHE, index=False)
 
-    bucket = _Bucket(MAX_RPS)
-    found: dict[str, int] = {}
+
+def _resolve(keys: list[str], cache: dict[str, int | None],
+             bucket: _Bucket, label: str) -> None:
+    """Fill `cache` for every key in `keys`, querying only what is missing."""
+    todo = [k for k in keys if k not in cache]
+    if not todo:
+        print(f"  {label}: all {len(keys)} keys already cached")
+        return
+    n_req = (len(todo) + BATCH - 1) // BATCH
+    print(f"  {label}: {len(todo)} keys to query in {n_req} POSTs "
+          f"({len(keys) - len(todo)} cached)")
     t0 = time.time()
-    for i in range(0, len(uniq), BATCH):
-        chunk = uniq[i:i + BATCH]
-        found.update(lookup_batch(chunk, bucket))
-        done = min(i + BATCH, len(uniq))
-        print(f"  {done}/{len(uniq)} keys, {len(found)} registered, "
+    for i in range(0, len(todo), BATCH):
+        chunk = todo[i:i + BATCH]
+        found = lookup_batch(chunk, bucket)
+        for k in chunk:
+            cache[k] = found.get(k)       # None records a confirmed absence
+        _save_cache(cache)                # after every batch: 150 keys is the
+        done = min(i + BATCH, len(todo))  # most a crash can cost
+        hits = sum(1 for k in todo[:done] if cache.get(k))
+        print(f"    {done}/{len(todo)} keys, {hits} registered, "
               f"{time.time() - t0:.0f}s")
 
+
+def _rows(smiles: list[str], keys: dict[str, str],
+          cache: dict[str, int | None]) -> pd.DataFrame:
     rows = []
-    for smi in s.smiles:
+    for smi in smiles:
         k = keys.get(smi)
         if k is None:
             rows.append(dict(smiles=smi, inchikey="", n_cids=0, cid="",
                              status="unkeyable"))
             continue
-        cid = found.get(k)
+        cid = cache.get(k, "pending")
+        if cid == "pending":
+            continue                      # not queried yet; omit, never guess
         rows.append(dict(smiles=smi, inchikey=k, n_cids=1 if cid else 0,
                          cid=cid or "", status="hit" if cid else "notfound"))
-    df = pd.DataFrame(rows)
+    return pd.DataFrame(rows)
+
+
+def run_batched(limit: int | None = None, seed: int = 0,
+                survivors_only: bool = False) -> pd.DataFrame:
+    """Survivors first, then the rest of the pool.
+
+    The survivor set is what anyone actually reads, so it is resolved and
+    reported before the remaining ~12600 molecules are touched. Both phases
+    share one key cache, so a key needed by both is fetched once and an
+    interrupted run resumes at the last 150-key batch.
+    """
+    full = pool(False)
+    if limit:
+        full = full.sample(min(limit, len(full)), random_state=seed)
+    surv_mask = (full.passes.fillna(False).astype(bool)
+                 & ~full.in_training_flat.fillna(False).astype(bool))
+    surv = full[surv_mask]
+
+    keys = inchikeys(list(full.smiles))
+    unkeyable = len(full) - len(keys)
+    print(f"{len(full)} molecules ({len(surv)} survivors), "
+          f"{len(keys)} InChIKeys computed"
+          + (f", {unkeyable} unkeyable" if unkeyable else ""))
+
+    k_surv = sorted({keys[s] for s in surv.smiles if s in keys})
+    k_rest = sorted({keys[s] for s in full.smiles if s in keys} - set(k_surv))
+    print(f"{len(k_surv)} distinct survivor keys, {len(k_rest)} others\n")
+
+    cache = _load_cache()
+    if cache:
+        print(f"key cache: {len(cache)} keys already resolved")
+    bucket = _Bucket(MAX_RPS)
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
+    _resolve(k_surv, cache, bucket, "survivors")
+    sdf = _rows(list(surv.smiles), keys, cache)
+    sdf.to_csv(SURVIVOR_RAW, index=False)
+    print(f"\n  wrote {SURVIVOR_RAW.name} ({len(sdf)} rows)")
+    report(sdf, write=False, populations=("survivors",))
+
+    if survivors_only:
+        return sdf
+
+    print(f"\n{'=' * 70}\nphase 2: the remaining {len(k_rest)} keys\n{'=' * 70}")
+    _resolve(k_rest, cache, bucket, "rest of pool")
+    df = _rows(list(full.smiles), keys, cache)
     df.to_csv(OUT, index=False)
-    print(f"\nwrote {OUT} ({len(df)} rows)")
+    print(f"\nwrote {OUT.name} ({len(df)} rows)")
     return df
 
 
@@ -353,40 +416,47 @@ def _summarize(m: pd.DataFrame, title: str, note: str = "") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def report(df: pd.DataFrame, write: bool = True) -> None:
+def report(df: pd.DataFrame, write: bool = True,
+           populations: tuple[str, ...] = ("all", "survivors")) -> None:
     m = classify(df)
     print(f"\n{'=' * 70}\nWHERE THE GENERATED MOLECULES COME FROM\n{'=' * 70}")
 
-    # A PARTIAL CENSUS IS NOT A SAMPLE. The census walks the pool file in order,
-    # and that order is not random with respect to the answer: training-set
-    # matches run at 44.4% in the first eighth of the file and 0.5% in the last.
-    # A run stopped early therefore overstates the training bucket several-fold
-    # -- 32.9% against the true figure at 362/19219 queried. Refuse to present
-    # it as a result.
-    total = len(pd.read_csv(SCREENED))
-    if len(m) < total:
-        print(f"\n  *** INCOMPLETE: {len(m)}/{total} queried "
-              f"({len(m) / total:.1%}). These numbers are NOT a valid sample. ***")
-        print("  The pool file is ordered with training-set matches concentrated")
-        print("  at the top (44.4% in the first eighth, 0.5% in the last), so a")
-        print("  partial census overstates the training bucket. Finish the run,")
-        print("  or use --limit N, which samples at random, before quoting it.")
+    scr = pd.read_csv(SCREENED)
+    # A PARTIAL CENSUS IS NOT A SAMPLE. The pool file is ordered such that
+    # training-set matches run at 44.4% in its first eighth and 0.5% in the
+    # last, so a run stopped part-way overstates the training bucket -- it read
+    # 32.9% at 362/19219 against a random-sample estimate of 7.5%. Refuse to
+    # present that as a result. A survivors-only phase is NOT partial: it is a
+    # complete census of a defined population.
+    pool_sum = surv_sum = pd.DataFrame()
+    if "all" in populations:
+        if len(m) < len(scr):
+            print(f"\n  *** INCOMPLETE: {len(m)}/{len(scr)} resolved "
+                  f"({len(m) / len(scr):.1%}). NOT a valid sample. ***")
+            print("  The pool file is ordered with training-set matches")
+            print("  concentrated at the top, so a partial census overstates")
+            print("  that bucket. Finish the run, or use --limit N, which")
+            print("  samples at random, before quoting anything.")
+        pool_sum = _summarize(
+            m, "ALL GENERATED",
+            "every deduplicated molecule the ten policy seeds produced")
 
-    pool_sum = _summarize(
-        m, "ALL GENERATED",
-        "every deduplicated molecule the ten policy seeds produced")
-
-    # Survivors are a SUBSET of the pool, so this needs no extra queries. The
-    # training bucket is necessarily zero here: postfilter removes those, which
-    # is the whole point of the screen. Quote this population's novel rate only
-    # against its own denominator.
-    sv = m[m.passes.fillna(False).astype(bool) &
-           ~m.in_training_flat.fillna(False).astype(bool)]
-    surv_sum = _summarize(
-        sv, "SCREENED SURVIVORS",
-        "after size, structural, alert and training-set screening. The "
-        "training bucket is\n  zero by construction -- those were removed to "
-        "form this set.")
+    if "survivors" in populations:
+        # Survivors are a SUBSET of the pool, so this needs no extra queries.
+        # The training bucket is necessarily zero: postfilter removes those,
+        # which is the point of the screen. Quote this novel rate only against
+        # this denominator.
+        sv = m[m.passes.fillna(False).astype(bool) &
+               ~m.in_training_flat.fillna(False).astype(bool)]
+        n_expected = int((scr.passes.fillna(False).astype(bool)
+                          & ~scr.in_training_flat.fillna(False).astype(bool)).sum())
+        if len(sv) < n_expected:
+            print(f"\n  *** survivors INCOMPLETE: {len(sv)}/{n_expected} ***")
+        surv_sum = _summarize(
+            sv, "SCREENED SURVIVORS",
+            "after size, structural, alert and training-set screening. The "
+            "training bucket is\n  zero by construction -- those were removed "
+            "to form this set.")
 
     if write and len(m):
         OUT.parent.mkdir(parents=True, exist_ok=True)

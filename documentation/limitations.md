@@ -133,8 +133,40 @@ weight of what remains. And nothing here shows dropping SA is *safe*: no
 synthesizability check was run on the resulting molecules. That is the next
 measurement, and a `w_S` sweep is cheaper than an on/off ablation.
 
-### 1.8 `floor = -2.0` is untuned **[untested]**
-Carried over from `cold_and_warm_start.md`, never swept.
+### 1.8 `floor = -2.0` is untuned **[measured]**
+*Swept. −2.0 is at the knee: it is the weakest value that fully deters gate
+failure, and stronger values change nothing measurable.*
+
+`results/brics_floor/` — floor in {−1.0, −4.0} against the default −2.0, all at
+the settled config (kl=1.0, reward seed 0, ws0, GRPO seed 0, 250 steps).
+
+First, how often it binds at all: **2.71% of rows**, 1.7 of 64 per step. Almost
+entirely the size gate (undersized 0.0267) rather than unsanitizability
+(0.0004) — so this is the penalty for being too small, not for being invalid.
+
+| floor | scaffold | unique | C | reward | adv_std | undersized |
+|---|---|---|---|---|---|---|
+| −4.0 | 0.881 | 0.976 | 0.864 | 2.116 | 1.100 | 0.0259 |
+| **−2.0** | **0.887** | **0.986** | 0.871 | 2.130 | 1.022 | 0.0267 |
+| −1.0 | 0.834 | 0.979 | 0.908 | 2.173 | 0.999 | 0.0347 |
+
+Welch on the last 25 steps against the default, 8 tests, x8 threshold 0.0063:
+
+| comparison | scaffold | C | undersized |
+|---|---|---|---|
+| −1.0 vs −2.0 | **−0.053** (p<1e-4) | **+0.037** (p<1e-4) | **+0.018** (p=0.0035) |
+| −4.0 vs −2.0 | −0.006 (p=0.60) | −0.007 (p=0.34) | −0.001 (p=0.78) |
+
+**Weakening the floor measurably hurts; strengthening it does nothing.** At −1.0
+the penalty is too weak to deter gate failure: undersized molecules more than
+double (0.0150 → 0.0331 on the last 25 steps) and the policy buys `C` (+0.037)
+by drifting toward molecules the gate is meant to exclude — scaffold diversity
+falls 0.053 with it. At −2.0 the behaviour is already fully deterred, so −4.0
+adds nothing and only inflates `adv_std` (1.02 → 1.10), which is the hurdle
+estimator's spread moving away from its design value of 1.0.
+
+So the inherited default is correct and now has a reason: it is the knee of this
+curve. One seed, one configuration.
 
 ### 1.9 Single-seed interventions **[measured, as a gap]**
 The 3-seed discipline was applied to the baseline only. The KL sweep, the
@@ -143,13 +175,142 @@ raw-vs-logit A/B and the Tox21 probe are all **seed 0 alone**. Given that seed
 vs 0.75/0.73 at step 90), every intervention result should be treated as
 provisional until replicated.
 
-### 1.10 Runs are short, and no long run has been validated **[untested]**
-150–200 steps. The originally planned 500-step run has correctly not been
-attempted, but that means nothing is known about behaviour past step 200.
+### 1.10 Runs are short, and no long run has been validated **[measured]**
+*1000 steps at the settled config. No sustained decay. Validity holds at
+0.9998. The settled point is stable over 5x the previous horizon.*
 
-### 1.11 Generation has only ever been run on BBBP **[untested]**
-B3DB is trained and benchmarked on the classifier side but has never been used
-as a generation target.
+`results/brics_long/kl1_s0_1000` — kl=1.0, reward seed 0, warm start ws0, GRPO
+seed 0, 1000 steps, same instrumentation. 100-step window means:
+
+| window | scaffold | unique | C | reward | rdkit_valid |
+|---|---|---|---|---|---|
+| 0-99 | 0.835 | 0.985 | 0.839 | 1.702 | 0.9998 |
+| 200-299 | 0.873 | 0.984 | 0.878 | 2.141 | 0.9997 |
+| 400-499 | 0.859 | 0.982 | 0.894 | 2.171 | 0.9997 |
+| 600-699 | 0.861 | 0.984 | 0.901 | 2.195 | 1.0000 |
+| 800-899 | 0.852 | 0.979 | 0.904 | 2.197 | 1.0000 |
+| 900-999 | 0.853 | 0.979 | 0.905 | 2.198 | 0.9998 |
+
+**The apparent decay is a settling transient, not a trend.** Regressing
+`scaffold_frac` on step from 250 onward gives p = 0.001 (−0.0196 over 750
+steps), but that is driven by settling from 0.873 to ~0.855 between steps 250
+and 400. Starting the window later, there is no detectable trend:
+
+| window | slope/step | p |
+|---|---|---|
+| 250-999 | −2.61e-05 | 0.001 |
+| 400-999 | −1.47e-05 | 0.179 |
+| 500-999 | −1.48e-05 | 0.299 |
+| 700-999 | −1.51e-05 | 0.623 |
+
+**Stated as a bound rather than an absence**, because 600 steps of a statistic
+with per-step sd ~0.05 can only rule out so much: any sustained decay is slower
+than roughly **0.024 per 1000 steps**, the detection limit here. For scale, the
+documented ungated collapse ran at −0.0035/step (0.80 → ~0.10 in 200 steps),
+134x faster than even the transient slope; at the detection limit it would take
+>30,000 steps to reach 0.10.
+
+`unique_smiles_frac` shows no trend (p = 0.128 from step 250). `c_mean` rises
++0.0276 over 750 steps (p < 0.001) while scaffold is flat — the Goodhart
+direction, at a rate that does not matter over any horizon anyone will run.
+
+Caveats: **one seed, one configuration.** 6 tests were run on this trajectory,
+and the two significant results survive x6 (scaffold transient 0.006, C rise
+<0.001). Validity min 0.9844, mean 0.9998 across all 1000 steps.
+
+### 1.11 Generation has only ever been run on BBBP **[measured]**
+*B3DB generation works — validity and duplicate-freedom match BBBP. But the
+diversity-RAISING effect is **BBBP-specific**, and that is established at
+matched policy drift rather than at a matched coefficient.*
+
+`results/brics_b3db/` — B3DB warm start (30 epochs, nll 1.5336, 100% valid),
+then GRPO at five coefficients, 250 steps, reward seed 0, GRPO seed 0. B3DB's
+action space is ~11.6k actions against BBBP's 6051 (4795 fragments vs 2484).
+
+| arm | measured KL | scaffold | start | delta | p | unique | C | valid |
+|---|---|---|---|---|---|---|---|---|
+| **BBBP kl=1.0** | 0.482 | 0.887 | 0.839 | **+0.048** | 0.0007 | 0.986 | 0.871 | 0.9996 |
+| B3DB kl=0.1 | 0.913 | 0.441 | 0.843 | **−0.402** | <1e-30 | 0.526 | 0.963 | 0.9998 |
+| **B3DB kl=0.3** | **0.503** | 0.687 | 0.843 | **−0.156** | <1e-13 | 0.792 | 0.929 | 0.9998 |
+| B3DB kl=1.0 | 0.097 | 0.831 | 0.856 | −0.025 | 0.096 | 0.983 | 0.843 | 0.9999 |
+| B3DB kl=3.0 | 0.038 | 0.825 | 0.858 | −0.032 | 0.080 | 0.985 | 0.747 | 0.9998 |
+| B3DB kl=10.0 | 0.011 | 0.853 | 0.850 | +0.003 | 0.849 | 0.984 | 0.682 | 0.9997 |
+
+**The decisive row is B3DB kl=0.3**, where measured KL is 0.503 against BBBP's
+0.482 — matched drift, 1.04x. At matched drift BBBP *gains* 0.048 of scaffold
+diversity and B3DB *loses* 0.156. Opposite signs, both far past the x6
+Bonferroni threshold of 0.0083. So the effect is a property of the BBBP
+objective, not of the coefficient.
+
+**Comparing at a matched coefficient would have given the wrong answer**, and
+nearly did. At kl=1.0 B3DB simply shows no change (p = 0.096), which reads as a
+weak null; the coefficient delivers 5x less drift there than it does on BBBP.
+Matching by measured effect is what makes the comparison interpretable — the
+same lesson as §4c on `kl_coef` not transplanting across action spaces.
+
+**There is no good operating point on B3DB.** Either the policy barely moves
+(kl=10.0: KL 0.011, C 0.682, scaffold preserved at 0.853 because almost nothing
+was learned) or it learns and degrades diversity (kl=0.3: C 0.929, scaffold
+0.687, unique 0.792). BBBP has a setting that does both; B3DB does not, at least
+not among these five.
+
+What transfers regardless: **sanitization validity 0.9997–0.9999 at every
+coefficient**, and duplicate-freedom at kl >= 1.0 (unique 0.983–0.985). The
+assembly engine is dataset-independent; the reward's behaviour is not.
+
+Caveats: one GRPO seed and one warm start per cell. 6 start-vs-end tests across
+the item, threshold x6 = 0.0083; the two significant results clear it by >10
+orders of magnitude and the BBBP reference clears it at 0.0042.
+
+**The reward-headroom explanation was tested and is EXCLUDED.** The proposed
+mechanism was that B3DB's reward has more room left to climb, so its policy
+climbs further (+0.305 vs +0.112) and pays diversity for the climb.
+
+Headroom, measured on the **full corpora** rather than a sample, because two
+independent 300-molecule draws disagreed by 0.039 (a 300-draw carries SEM
+~0.020 on this statistic, so that gap is ~2 SEM and expected):
+
+| | n | mean C on real molecules | frac > 0.95 |
+|---|---|---|---|
+| BBBP | 2039 | **0.7576** | 0.4453 |
+| B3DB | 7805 | **0.6554** | 0.3280 |
+
+Definitive gap **0.1022**. (The two sampled estimates were 0.092 and 0.135 —
+quoting either unqualified was a mistake on both sides.)
+
+Tested on the `--reward-seed` axis, which moves BBBP headroom independently of
+the dataset — the right isolation, since weakening the ensemble instead would
+confound headroom with model capacity. Seed 1 has the most headroom
+(real-molecule C 0.688), seed 5 the least (0.787). That **0.099 span covers 97%
+of the definitive gap**. Three GRPO seeds each, kl=1.0, ws0, 250 steps
+(`results/brics_headroom/`):
+
+| reward seed | headroom | C climb | scaffold delta |
+|---|---|---|---|
+| 1 | 0.688 | +0.113 +/- 0.007 | +0.014 +/- 0.008 |
+| 5 | 0.787 | +0.092 +/- 0.004 | +0.012 +/- 0.011 |
+
+| pre-specified | seed1 − seed5 | p | predicted? |
+|---|---|---|---|
+| C climb higher | +0.0219 | 0.063 | direction yes, not significant |
+| scaffold delta lower | **+0.0026** | 0.86 | **no** |
+
+**Half the mechanism holds and the load-bearing half does not.** More headroom
+does buy a longer climb in `C` (+0.022, directionally as predicted, though
+p = 0.063 against the x2 threshold of 0.025) — which is close to definitional,
+since a lower starting C leaves more room. But the *consequence* the hypothesis
+requires, that climbing costs diversity, does not follow at all.
+
+This is an exclusion rather than a null: the difference is +0.003 with a 95% CI
+of [−0.037, +0.043], while the predicted effect scaled to this headroom span is
+**−0.198**, which the CI excludes and which sits **14.3 SEM** from the observed
+value. The exclusion holds on either sampled estimate of the gap too (8.3 SEM on
+one, 5.7 on the other), so it does not depend on which measurement is used.
+
+So B3DB's behaviour is not explained by how saturated its reward is. Candidates
+not yet excluded include corpus size (7805 vs 2039 molecules), action-space size
+(~11.6k vs 6051), and label composition — **no replacement mechanism is proposed
+here**, because the data that falsified this one cannot support a successor.
 
 ---
 
@@ -285,12 +446,197 @@ That swing exceeds any effect being measured. `diversity.reference_band`
 handles this, but any comparison made without it — including comparisons
 between two generated sets of different sizes — is invalid.
 
-### 4.4 Most per-step diagnostics come from one group of 64 **[untested]**
-Within-group scaffold fraction conflates "the policy is narrow" with "64 draws
-is a small sample". Sampling M groups per checkpoint and comparing within-group
-against pooled diversity would separate them. Not done — so every "diversity
-collapsed" claim assumes the policy's support genuinely shrank, rather than
-having verified it.
+### 4.4 Most per-step diagnostics come from one group of 64 **[measured]**
+*Within-group `scaffold_frac` at n=64 is validated as a COMPARATIVE statistic
+and must not be read as a support fraction. The conflation is real but it does
+not bite, because a wide-support control scores the same as the policy.*
+
+M=8 groups of N=64 per checkpoint, against real BBBP molecules drawn the same
+way as the wide-support control:
+
+| source | within-group | pooled (n=512) | distinct scaffolds, 1→8 groups |
+|---|---|---|---|
+| trained (kl=1.0, seed 0) | 0.877 +/- 0.013 | 0.678 | 60 → 347 (5.8x) |
+| warm start | 0.828 +/- 0.013 | 0.633 | 52 → 324 (6.2x) |
+| **real BBBP (control)** | **0.879 +/- 0.011** | **0.633** | 56 → 324 (5.8x) |
+
+**The within-to-pooled drop is a sample-size property, not evidence of a narrow
+policy.** Real BBBP molecules show the same drop (ratio 0.72) as the trained
+policy (0.77). A distribution with ~1000 scaffolds in it still scores 0.879
+within-group at n=64, so 0.879 is approximately the ceiling the sample size
+imposes and not a statement about support.
+
+**Re-measured at n=32 groups per arm, identical procedure, exactly 64 molecules
+per group: training RAISED diversity rather than degrading it.**
+
+| arm | within-group (n=32) |
+|---|---|
+| trained (kl=1.0, seed 0) | 0.8838 +/- 0.0077 |
+| warm start | 0.8296 +/- 0.0088 |
+| real BBBP (control) | 0.8608 +/- 0.0075 |
+
+| comparison | diff | t | p | x3 | verdict |
+|---|---|---|---|---|---|
+| trained vs warm start | +0.0542 | 4.63 | <0.0001 | <0.001 | **established** |
+| warm start vs real | −0.0312 | −2.70 | 0.0089 | 0.027 | survives |
+| trained vs real | +0.0229 | 2.13 | 0.037 | 0.11 | **does not survive** |
+
+So at `kl_coef=1.0`, GRPO moved the policy from measurably *below* the
+real-molecule control to *at or slightly above* it. **That is the strongest form
+of "reward hacking is contained" in this project** — not merely that diversity
+failed to collapse, but that optimization increased it. The further claim that
+the trained policy *exceeds* real molecules does not survive correction for the
+three comparisons and is not made.
+
+**But the statistic resolves support poorly in exactly this band**, so "at the
+real level" bounds the support loosely. Pools built from BBBP with a known
+number of distinct scaffolds, same statistic:
+
+| scaffolds in pool | within-group @n=64 |
+|---|---|
+| 1021 | 0.871 +/- 0.013 |
+| 500 | 0.844 +/- 0.010 |
+| 300 | 0.830 +/- 0.015 |
+| 150 | 0.514 +/- 0.022 |
+| 20 | 0.268 +/- 0.007 |
+
+It discriminates sharply below ~300 scaffolds and weakly above: a 3.4x change in
+support (300 → 1021) moves it only 0.830 → 0.871. Both the trained policy and
+the control sit in the weakly-resolved region, so "comparable within-group
+score" is consistent with support differing by a factor of two. The
+scaffold-accumulation curve (347 distinct over 512 molecules for the trained
+policy against 324 for the control) is the better instrument there, and shows no
+deficit — stated descriptively, as it is one draw per arm.
+
+**A procedure note that explains an earlier discrepancy.** The warm start
+measured 0.854 in one place and 0.828-0.830 here. Cause: `scaffold_frac` is
+n-dependent, and the earlier figure divided by the ~62 valid molecules in a
+64-sample draw while these divide by exactly 64. Verified: same checkpoint,
+32 groups, gives 0.830 with the fixed-64 procedure and 0.854 keeping all valid
+from a 64-draw. Every arm in the tables above uses exactly 64, so the
+comparisons are matched; cross-measurement comparisons of this statistic are
+only valid at matched molecule count.
+
+Consequences for existing numbers:
+
+* Diversity comparisons between arms measured identically remain valid, which
+  is every frontier number and the 0.864 headline. The kl frontier spans
+  0.46 to 0.91 against a control at 0.879 — far outside what sample size alone
+  explains.
+* The historical collapse claims (SELFIES scaffold 0.07–0.14) are genuine
+  narrowing: they sit an order of magnitude below the real-molecule reference
+  under the identical statistic.
+* **Absolute within-group values must not be quoted as diversity fractions.**
+  "0.88 of scaffolds are distinct" is wrong; "0.88, the same as real drugs at
+  this sample size" is right.
+
+Driver: ad hoc (see the commit that closed this item). Not promoted to a module
+because it answers a question about a statistic rather than producing a
+recurring diagnostic.
+
+### 4.5 An uncertainty penalty has no usable per-molecule signal **[measured]**
+*Proposed as a reward term against the layer-3 problem, following the
+applicability-domain framing (DyRAMO, Nat Commun 2025). Measured first, and
+there is nothing to add. No term was built and nothing was changed.*
+
+The idea: the reward is unreliable off-distribution, so penalise high predictive
+variance and keep generation where the classifier can be trusted. Both
+uncertainty definitions this repo can compute were tested on existing
+`brics_kl1` samples against real BBBP draws, read-only.
+
+| definition | per-molecule AUC, generated vs real |
+|---|---|
+| MC-dropout within each member (K=50) | 0.533 |
+| ensemble-member spread | **0.477** |
+
+**A reward term acts per molecule, and neither definition discriminates there.**
+MC dropout reaches AUC 0.533 (per-molecule Welch p = 0.108); member spread is
+0.477, i.e. *below* chance — generated molecules produce **more** member
+agreement than real ones (0.773 vs 0.807), the opposite of what the framing
+needs.
+
+**The set-level test is significant and that is the trap.** Averaged over 64
+molecules, generated sets do show higher MC-dropout spread: 1.0061 +/- 0.0060
+against 0.9881 +/- 0.0037, t = 2.56, p = 0.020, Cohen d = 1.04 over 12 sets per
+arm. Same data, AUC 0.533. Averaging cancels per-molecule noise and manufactures
+a population effect that cannot be acted on one molecule at a time. **A d = 1.04
+set-level effect and a 0.53 per-molecule AUC are compatible**, and the per-
+molecule number is the one a reward term lives on.
+
+Redundancy was not the obstacle — uncertainty correlates with `C` at
+rho = −0.095 on generated molecules, so it would have added independent
+information had there been any.
+
+**Why member spread reverses: saturation, and the size of the effect depends on
+the scale.** Member spread is partly a function of position on the sigmoid
+rather than of confidence. Measured on 400 real BBBP molecules:
+
+| scale | corr(spread, abs(C − 0.5)) | mid-to-top collapse |
+|---|---|---|
+| probability | **−0.917** | 25.2x (0.2657 → 0.0105) |
+| **logit** (what `mc_dropout.py` computes) | **−0.453** | 2.0x (1.342 → 0.664) |
+
+On the probability scale the confound is near-total and member spread is
+*structurally* unusable as an applicability domain: maximizing `C` would
+minimize spread automatically, so a penalty on it would reward the saturated
+region twice, once through `C` and once through apparent certainty.
+
+**On the logit scale that argument is much weaker** — r = −0.453 is about 20%
+shared variance, not near-determinism — and the logit transform exists in
+`mc_dropout.py` for exactly this reason. The AUC of 0.477 above was already
+computed on the logit scale, so **the empirical failure holds on the
+less-confounded scale and is not explained by saturation alone.** Anyone
+reviving this must say which scale they mean; the two give different verdicts on
+whether the estimator is unusable in principle or merely useless in practice.
+
+**MC dropout is not confounded.** corr(MC-dropout uncertainty,
+abs(C − 0.5)) = **−0.006** (Spearman +0.074), no collapse across C bands.
+
+**The decisive test is C-MATCHED AUC, and it supersedes every raw AUC above.**
+Generated and real molecules have different `C` distributions *by construction*
+— the generator optimizes `C` — so a raw AUC between them partly measures that
+distribution difference rather than the estimator. Matching real molecules to
+the generated `C` distribution (20 quantile bins, mean C 0.879 vs 0.878 after
+matching) removes it:
+
+| estimator | raw AUC | C-matched AUC |
+|---|---|---|
+| member spread (logit) | 0.390 | **0.511** |
+| MC dropout (logit, K=50) | 0.622 | **0.533**, 95% CI [0.503, 0.563] |
+
+**Member spread carries no information beyond `C` position** — matched, it is
+chance. That is a stronger statement than "partly confounded" and it holds on
+the logit scale where the saturation argument is weak, so the two routes agree.
+
+**MC dropout's effect is between d = 0.01 and d = 0.22, and a per-molecule term
+needs orders of magnitude more.** The closure does **not** rest on whether the
+CI clears chance by 0.003 — that lower bound is the first casualty of the >20
+tests run against this data. It rests on the whole interval being unusable:
+
+| | AUC | Cohen d | molecules needed for 80% power |
+|---|---|---|---|
+| CI lower | 0.503 | 0.011 | ~138,800 |
+| point | 0.533 | 0.117 | ~1,144 |
+| **CI upper** | **0.563** | **0.224** | **~312** |
+
+**A per-molecule penalty acts on n = 1.** Even the optimistic end of the
+interval needs ~312 molecules to resolve the difference the term is supposed to
+express. So the route closes whether or not the lower bound survives
+multiplicity correction.
+
+Stated this way deliberately rather than as "MC dropout carries real information
+beyond C", which is true and invites reviving the route on a marginal CI.
+
+**A bootstrap note, because the first version of this number was wrong.**
+Resampling only the C-matching gave 0.585 +/- 0.004. Resampling **both** the
+molecule sets and the matching gives 0.533 [0.503, 0.563] — a lower mean and an
+interval ~8x wider. Matching-only resampling holds the molecule sets fixed and
+is therefore overconfident, the same error as fixing one pool in a two-pool
+comparison (§4c). Resample every axis.
+
+`mc_dropout.py`'s own docstring anticipated the member-spread problem from a
+different angle: three members sharing a featurizer, a split and a skeleton may
+be too similar to disagree, so low spread cannot be read as genuine certainty.
 
 ---
 

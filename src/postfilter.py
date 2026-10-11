@@ -172,19 +172,38 @@ def novelty(df: pd.DataFrame, dataset: str = "bbbp") -> pd.DataFrame:
 
     cfg = DATASETS[dataset]
     raw = pd.read_csv(cfg["path"], sep=cfg["sep"])[cfg["smiles_col"]].dropna()
-    known = set()
+    known, known_flat = set(), set()
     for s in raw:
         m = Chem.MolFromSmiles(s)
-        if m is not None:
-            known.add(Chem.MolToSmiles(m))
+        if m is None:
+            continue
+        known.add(Chem.MolToSmiles(m))
+        # Constitution only. An exact-SMILES test is STEREO-SENSITIVE, and the
+        # BRICS generator emits flat molecules (brics_assembly.corpus strips
+        # stereo, because reassemble flips the anchor's parity), so a training
+        # molecule with defined centres canonicalizes differently and never
+        # matches. Measured on a 5888-molecule BRICS pool: the exact test found
+        # 1009 training molecules, the flat test 1486 -- 477 missed, and 171 of
+        # the 1891 "survivors" were training molecules wearing no stereo.
+        #
+        # Excluding on the flat form is the defensible default rather than a
+        # convenience: the featurizer has no chirality features, so C(m) is
+        # identical across stereoisomers, and a candidate differing from a
+        # training molecule only at a centre the scorer cannot see is not a new
+        # candidate. `in_training_set` is kept so the old number stays visible.
+        flat = Chem.MolFromSmiles(Chem.MolToSmiles(m))
+        if flat is not None:
+            Chem.RemoveStereochemistry(flat)
+            known_flat.add(Chem.MolToSmiles(flat))
     df = df.copy()
     df["in_training_set"] = df.smiles.isin(known)
+    df["in_training_flat"] = df.smiles.isin(known_flat) | df["in_training_set"]
     return df
 
 
 def report(df: pd.DataFrame, top: int = 25) -> pd.DataFrame:
     total = len(df)
-    survivors = df[df["passes"] & ~df["in_training_set"]].copy()
+    survivors = df[df["passes"] & ~df["in_training_flat"]].copy()
     print("=" * 74)
     print("POST-GENERATION SCREEN")
     print("=" * 74)
@@ -193,7 +212,8 @@ def report(df: pd.DataFrame, top: int = 25) -> pd.DataFrame:
     print(f"  structural defect    : {int((df.structural != '').sum())}")
     print(f"  targeted alert       : {int((df.n_targeted > 0).sum())}")
     print(f"  catalogue alert      : {int((df.n_catalogue > 0).sum())}")
-    print(f"  already in training  : {int(df.in_training_set.sum())}")
+    print(f"  already in training  : {int(df.in_training_flat.sum())}"
+          f"  (exact-SMILES only: {int(df.in_training_set.sum())})")
     print(f"  SURVIVORS            : {len(survivors)} ({len(survivors)/max(total,1):.0%})")
 
     pre = summarize(df.smiles.tolist())
@@ -274,13 +294,13 @@ def sample_batches(checkpoints: list[Path], n_batches: int, group_size: int,
     """
     import torch
 
-    from .generator import SelfiesGenerator
+    from .brics_generator import load_generator
 
     out_dir.mkdir(parents=True, exist_ok=True)
     k = 0
     for ci, ck in enumerate(checkpoints):
         torch.manual_seed(seed + 1000 * ci)
-        gen = SelfiesGenerator.load(Path(ck) / "bbbp_grpo.pt", device)
+        gen = load_generator(Path(ck) / "bbbp_grpo.pt", device)
         for _ in range(n_batches):
             smi = gen.sample(group_size, device=device)["smiles"]
             (out_dir / f"step{k:04d}.json").write_text(

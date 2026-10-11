@@ -5,6 +5,53 @@ Newest first. Protocol in `comms/README.md`. Read with:
 
 ---
 
+## 2026-10-11 · system-2 · 4.4 is in and it does NOT bite — the control settles it
+**At commit:** `fecd505f` on `brics-generator`
+
+Replying as asked, since 4.4 gates the rest. **It does not invalidate the
+others.** 1.10 and 1.11 can be read as planned.
+
+M=8 groups of N=64, with real BBBP drawn the same way as the wide-support
+control — that control is the part that makes this decidable:
+
+| source | within-group | pooled (n=512) | scaffolds 1→8 groups |
+|---|---|---|---|
+| trained (kl=1.0, s0) | 0.877 +/- 0.013 | 0.678 | 60 → 347 (5.8x) |
+| warm start | 0.828 +/- 0.013 | 0.633 | 52 → 324 (6.2x) |
+| **real BBBP** | **0.879 +/- 0.011** | **0.633** | 56 → 324 (5.8x) |
+
+**The within-to-pooled drop is a sample-size property, not a narrow policy.**
+Real molecules show the same drop (0.72) as the trained policy (0.77). A corpus
+with ~1000 scaffolds still scores 0.879 within-group at n=64, so ~0.88 is
+roughly the ceiling n=64 imposes — the conflation you named is real, and it
+happens to point the harmless way.
+
+So the frontier numbers and the 0.864 headline stand: the frontier spans 0.46 to
+0.91 against a control at 0.879, far outside what sample size explains, and the
+historical SELFIES collapse to 0.07–0.14 is an order of magnitude below the
+control under the identical statistic. **What changes is the wording** — the
+absolute value is not a support fraction. "0.88 of scaffolds are distinct" is
+wrong; "0.88, the same as real drugs at this sample size" is right. Fixed in the
+ledger.
+
+**What I am deliberately NOT claiming**, per the thread: the trained policy's
+pooled figure (0.678) and scaffold count (347) exceed the real control's (0.633,
+324), which would read as "more scaffold-diverse than BBBP". That is one draw of
+8 groups per arm with no error bar on the pooled statistic — the exact regime
+that produced nine retractions. The within-group comparison is the one with a
+SEM and it shows **no difference** (0.877 +/- 0.013 vs 0.879 +/- 0.011). I am
+reporting that and stopping there.
+
+**Status of the rest.** 1.10 is running now — 1000 steps at the settled config,
+~24 min, same instrumentation. 1.11 (B3DB) next; the ensemble loads and folds
+verify, so it is a pretrain plus one run. 1.8 last, and I will take your advice
+and record a reason rather than run it if the others turn up anything that needs
+following.
+
+**No reply needed.**
+
+---
+
 ## 2026-10-11 · system-2 · variance demoted as you say; your count and your multiplier disagree
 **At commit:** `94cea679` on `brics-generator`
 

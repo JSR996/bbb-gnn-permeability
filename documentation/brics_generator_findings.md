@@ -12,8 +12,10 @@ unique across the whole range.**
 
 **And the instrument gap reverses the confidence axis (section 3b).** Every BRICS
 point's `C(BBBP) - C(B3DB)` brackets the real-drug reference of +0.037; every
-SELFIES point is 1.6x to 2.7x it, with no overlap across 8 points. So BRICS'
-lower `c_mean` is honesty rather than weakness, and the "BRICS pays confidence
+SELFIES point is higher. Measured properly at n=12 per arm, BRICS' mean gap
+(+0.0381) sits 0.0009 from the real-drug reference (+0.0373) against SELFIES'
++0.0551, Welch p = 0.003 — but the per-sample distributions **overlap**. So
+BRICS' lower `c_mean` is honesty rather than weakness, and the "BRICS pays confidence
 for validity" framing in section 3 is wrong. (`D_real` appears to agree and is
 discarded: its discriminator was trained against SELFIES specifically, so it
 cannot rank two families. Section 3b.)
@@ -198,10 +200,37 @@ each run's last 20 sample steps with `aggregate_arms.pool`.
 **This reverses the reading of the C axis.** Sections 3 and 3a treat BRICS' lower
 `c_mean` as a cost. It is not: every BRICS point's instrument gap (+0.027 to
 +0.042) brackets the real-drug reference of +0.037, while every SELFIES point
-(+0.060 to +0.099) is 1.6x to 2.7x it. The two families **do not overlap at all**
-across 8 points -- max BRICS 0.042 < min SELFIES 0.060. SELFIES' higher
-confidence is substantially the selector's blind spot being exploited, not better
-molecules, which is exactly the failure the check exists to catch.
+(+0.060 to +0.099) is higher. SELFIES' extra confidence is substantially the
+selector's blind spot being exploited, not better molecules, which is exactly the
+failure the check exists to catch.
+
+**The "do not overlap" claim is RETRACTED.** It rested on 8 single draws. With
+12 samples per arm (3 runs x steps 200/220/240/249 each):
+
+| arm | n | mean gap | sd | range |
+|---|---|---|---|---|
+| BRICS | 12 | **+0.0381** | 0.0155 | +0.0170 to +0.0677 |
+| SELFIES | 12 | +0.0551 | 0.0065 | +0.0454 to +0.0636 |
+| real BBB+ drugs | — | +0.0373 | — | — |
+
+BRICS' max (+0.0677) exceeds SELFIES' min (+0.0454), so the families **do**
+overlap and an individual BRICS sample can be further from the real reference
+than an individual SELFIES one.
+
+**What survives is the mean difference, and it is still the strongest result in
+this report.** Welch t = -3.49, **p = 0.0034**, robust to leave-one-out
+(p = 0.0005 to 0.0078 dropping any single BRICS point). Mean |gap - real| is
+0.0126 for BRICS against 0.0178 for SELFIES, and BRICS' mean lands 0.0009 from
+the real-drug reference. So: *BRICS' instrument gap is significantly closer to
+real drugs on average, though the per-sample distributions overlap.* Not a
+categorical separation.
+
+**BRICS is also the less consistent arm on this axis** — sd 0.0155 against
+0.0065, a variance ratio of 5.74 with Levene (median-centred) p = 0.037, and
+unlike the retracted agreement-variance claim this one holds under
+leave-one-out (4.04 at worst). Marginal at n=12 and stated as such, but it is
+the opposite of the diversity axis, where BRICS needed the tuned coefficient and
+SELFIES was the robust one.
 
 **D_real is confounded and is NOT usable here.** The numbers above (BRICS
 0.931-0.947, SELFIES 0.710-0.800, real drugs 0.940) look like BRICS closing the
@@ -249,8 +278,8 @@ Caveat: B3DB aggregates BBBP among its sources, so it is an *unused* judge rathe
 than an independent one, and some shared molecules carry contradictory labels.
 It is the best available unseen judge, not a clean holdout. Each point is also
 n=1, so the within-family spread (BRICS 0.015 wide, SELFIES 0.039) is the only
-noise estimate -- but the families not overlapping across all 8 points is a
-stronger signal than any single comparison.
+noise estimate. The n=12 re-measurement above supersedes the non-overlap
+reading taken from those 8 points.
 
 ## 4. Retraction: the diversity collapse was a mis-set coefficient
 
@@ -388,8 +417,9 @@ does not arise at the tuned setting.
   clean holdout, and shared molecules can carry contradictory labels. A gap
   measured against a genuinely external set (the Adenot/Wang holdouts) would be
   stronger, but at n=55-59 those cannot support per-arm means.
-- **Section 3b is n=1 per point.** The families not overlapping across all 8
-  points is the real signal; no individual gap difference has an error bar.
+- **Section 3b's frontier table is n=1 per point**, and the non-overlap read
+  from it is retracted; see the n=12 re-measurement in that section. The mean
+  difference survives at p = 0.003.
 - **No realism claim is made.** `D_real` is discarded as confounded, and the
   experiment that would support one -- a discriminator trained on real against a
   mixture of both families -- has not been run.

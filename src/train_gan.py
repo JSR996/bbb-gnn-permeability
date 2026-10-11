@@ -41,7 +41,8 @@ from .brics_generator import BricsGenerator
 from .generator import CKPT_DIR, SelfiesGenerator
 from .grpo import clipped_loss, group_advantages
 from .models import build_model
-from .reward import assemble, load_frozen_classifier, score_terms, weights_at
+from .reward import (assemble, load_frozen_classifier, load_frozen_hybrid,
+                     score_terms, weights_at)
 
 # Generator families. The BRICS policy is valid by construction; the SELFIES
 # one relies on training for validity. Both satisfy the same roll contract,
@@ -183,6 +184,18 @@ def train(
     # members from different seeds have trained on each other's held-out
     # molecules.
     reward_seed: int = 0,
+    # WHICH CLASSIFIER PROVIDES C. "ensemble" is gin/gat/gine under GraphNorm,
+    # no descriptors -- the default, and the only one every committed result
+    # was trained against. "hybrid_batch" is the reported classifier: four
+    # architectures, 8 RDKit descriptors, BatchNorm. Switching it answers a
+    # question neither reward can answer alone -- does the generator's output
+    # depend on which judge it was optimized against? -- and is recorded in
+    # config.json so a run names the reward it chased.
+    #
+    # BatchNorm as a reward is only safe because load_frozen_hybrid asserts
+    # batch-independence on the exact checkpoints before returning. Do not
+    # route a BatchNorm model in any other way.
+    reward_family: str = "ensemble",
 ) -> dict:
     # Which pretrained decoder seeds theta_0, and therefore pi_ref, since
     # Eq. (18) sets pi_ref := pi_theta0. Swapping it swaps the KL anchor too,
@@ -238,7 +251,12 @@ def train(
     ref.eval().requires_grad_(False)
 
     disc = Discriminator().to(device)
-    classify = load_frozen_classifier(dataset=dataset, seed=reward_seed, device=device)
+    if reward_family == "hybrid_batch":
+        classify = load_frozen_hybrid(dataset=dataset, seed=reward_seed, device=device)
+    elif reward_family == "ensemble":
+        classify = load_frozen_classifier(dataset=dataset, seed=reward_seed, device=device)
+    else:
+        raise ValueError(f"unknown reward_family {reward_family!r}")
     # Frozen exactly as the permeability classifier is. Loaded only when
     # weighted, so a run without a toxicity model costs nothing and the
     # term stays inert rather than absent.
@@ -461,6 +479,7 @@ def train(
             "warm_start": str(warm),
             "generator": generator,
             "reward_seed": reward_seed,
+            "reward_family": reward_family,
             "ent_coef": ent_coef,
             # Thread count is part of the configuration, not of the machine.
             # OpenMP changes the order of float reductions, and this training
@@ -620,6 +639,12 @@ if __name__ == "__main__":
     ap.add_argument("--ent-coef", type=float, default=0.0,
                     help="entropy bonus on the policy. Acts on per-step "
                          "peakedness, which is the axis KL does not reach")
+    ap.add_argument("--reward-family", default="ensemble",
+                    choices=["ensemble", "hybrid_batch"],
+                    help="which classifier provides C. ensemble is "
+                         "gin/gat/gine GraphNorm (the default, and what every "
+                         "committed result used); hybrid_batch is the reported "
+                         "classifier with descriptors and BatchNorm")
     ap.add_argument("--reward-seed", type=int, default=0,
                     help="scaffold-split seed of the frozen reward ensemble. A "
                          "robustness axis: vary it between runs, never within "
@@ -639,6 +664,7 @@ if __name__ == "__main__":
               drop=tuple(t for t in args.drop.split(",") if t),
               warm_start=args.warm_start, threads=args.threads,
               generator=args.generator, reward_seed=args.reward_seed,
+              reward_family=args.reward_family,
               ent_coef=args.ent_coef)
     else:
         _self_check()

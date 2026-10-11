@@ -153,6 +153,113 @@ def load_frozen_classifier(
     return classify
 
 
+def load_frozen_hybrid(
+    dataset: str = "bbbp",
+    models: tuple[str, ...] = ("gcn", "sage", "gin", "gat"),
+    seed: int = 0,
+    device: str = "cpu",
+):
+    """The OTHER reward: hybrid + BatchNorm, for the matched-reward comparison.
+
+    WHY THIS EXISTS. The default reward is gin/gat/gine under GraphNorm, with
+    no descriptors. Training against a second, materially different classifier
+    answers a question neither one can answer alone: does the generator's
+    output depend on which judge it was optimized against? Agreement means the
+    permeability signal is robust; divergence means each reward is being
+    exploited on its own terms. See documentation/full_pipeline.md.
+
+    All four architectures are used, deliberately without selection -- picking
+    the three best hybrid_batch cells off a test table is the exact move the
+    reward-seed note warns against.
+
+    BATCHNORM IS THE HAZARD THIS REINTRODUCES, so it is asserted rather than
+    assumed. In train mode BatchNorm1d takes its statistics from the batch, so
+    C(m) would depend on the GRPO group m was sampled with and the reward would
+    stop being a function of the molecule (3.97e-02 drift measured in
+    limitations 5.0, against 6.0e-08 for GraphNorm). In `.eval()` it uses
+    running statistics instead, and the check below proves that holds for
+    these exact checkpoints before any of them is handed to a training loop.
+    The default reward does not need this check, which is why GraphNorm
+    remains the right default: it removes the failure mode instead of guarding
+    it.
+    """
+    from .hybrid_features import compute_descriptors
+    from .models_hybrid import build_hybrid_model
+
+    root = RESULTS_DIR / "hybrid_batch"
+    nets, scalings = [], []
+    folds: dict[str, np.ndarray] = {}
+    norms: dict[str, str] = {}
+    for name in models:
+        d = root / dataset / name / f"seed{seed}"
+        ckpt = d / "model.pt"
+        if not ckpt.exists():
+            raise FileNotFoundError(
+                f"{ckpt} missing. Train it with "
+                f"`python -m src.train_hybrid --run-all --norm batch`."
+            )
+        arch = run_contract(d)
+        norms[name] = arch.get("norm")
+        folds[name] = np.load(d / "test_preds.npz")["idx"]
+        net = build_hybrid_model(name, **arch).to(device)
+        net.load_state_dict(torch.load(ckpt, map_location=device))
+        net.eval()
+        net.requires_grad_(False)
+        nets.append(net)
+        sc = np.load(d / "descriptor_scaling.npz")
+        scalings.append((sc["mu"], sc["sigma"]))
+
+    first = models[0]
+    for name in models:
+        if not np.array_equal(folds[name], folds[first]):
+            shared = len(np.intersect1d(folds[name], folds[first]))
+            raise RuntimeError(
+                f"ENSEMBLE LEAK: {name} and {first} (hybrid_batch, "
+                f"dataset={dataset}, seed={seed}) were trained on different "
+                f"folds -- {shared}/{len(folds[first])} test molecules shared."
+            )
+    if set(norms.values()) != {"batch"}:
+        raise RuntimeError(
+            f"load_frozen_hybrid expects the BatchNorm arm, got norms={norms}. "
+            f"results/hybrid_batch must hold norm=batch runs only."
+        )
+
+    @torch.no_grad()
+    def classify(mols: list[Chem.Mol]) -> np.ndarray:
+        if not mols:
+            return np.zeros(0, dtype=float)
+        smis = [Chem.MolToSmiles(m) for m in mols]
+        graphs = [smiles_to_graph(s) for s in smis]
+        raw = np.array([compute_descriptors(s) for s in smis], dtype=np.float64)
+        probs = []
+        for net, (mu, sigma) in zip(nets, scalings):
+            # Each member standardizes with ITS OWN train-fold mu/sigma. Never
+            # statistics refit on the molecules being scored: that would let
+            # the generated distribution move its own reward.
+            std = (raw - mu) / sigma
+            for g, row in zip(graphs, std):
+                g.descriptors = torch.tensor(row, dtype=torch.float).unsqueeze(0)
+            batch = Batch.from_data_list(graphs).to(device)
+            probs.append(torch.sigmoid(net(batch)))
+        return torch.stack(probs).mean(0).cpu().numpy()
+
+    # Prove batch-independence on these checkpoints before they can be used.
+    probe = [Chem.MolFromSmiles(s) for s in
+             ("CC(=O)Oc1ccccc1C(=O)O", "Cn1cnc2c1c(=O)n(C)c(=O)n2C",
+              "ClC(Cl)(Cl)Cl", "c1ccc2c(c1)ccc1ccccc12")]
+    alone = np.array([classify([m])[0] for m in probe])
+    crowded = classify(probe)
+    drift = float(np.abs(alone - crowded).max())
+    if drift > 1e-5:
+        raise RuntimeError(
+            f"hybrid_batch reward is batch-DEPENDENT: C(m) drifts {drift:.2e} "
+            f"between scoring a molecule alone and in a group of four. eval() "
+            f"is not in force, so the reward is not a function of the molecule."
+        )
+
+    return classify
+
+
 def sanitizable(smiles: str) -> Chem.Mol | None:
     """Chemical validity, i.e. RDKit sanitization -- NOT grammar validity.
 

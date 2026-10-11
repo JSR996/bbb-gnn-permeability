@@ -143,9 +143,48 @@ raw-vs-logit A/B and the Tox21 probe are all **seed 0 alone**. Given that seed
 vs 0.75/0.73 at step 90), every intervention result should be treated as
 provisional until replicated.
 
-### 1.10 Runs are short, and no long run has been validated **[untested]**
-150–200 steps. The originally planned 500-step run has correctly not been
-attempted, but that means nothing is known about behaviour past step 200.
+### 1.10 Runs are short, and no long run has been validated **[measured]**
+*1000 steps at the settled config. No sustained decay. Validity holds at
+0.9998. The settled point is stable over 5x the previous horizon.*
+
+`results/brics_long/kl1_s0_1000` — kl=1.0, reward seed 0, warm start ws0, GRPO
+seed 0, 1000 steps, same instrumentation. 100-step window means:
+
+| window | scaffold | unique | C | reward | rdkit_valid |
+|---|---|---|---|---|---|
+| 0-99 | 0.835 | 0.985 | 0.839 | 1.702 | 0.9998 |
+| 200-299 | 0.873 | 0.984 | 0.878 | 2.141 | 0.9997 |
+| 400-499 | 0.859 | 0.982 | 0.894 | 2.171 | 0.9997 |
+| 600-699 | 0.861 | 0.984 | 0.901 | 2.195 | 1.0000 |
+| 800-899 | 0.852 | 0.979 | 0.904 | 2.197 | 1.0000 |
+| 900-999 | 0.853 | 0.979 | 0.905 | 2.198 | 0.9998 |
+
+**The apparent decay is a settling transient, not a trend.** Regressing
+`scaffold_frac` on step from 250 onward gives p = 0.001 (−0.0196 over 750
+steps), but that is driven by settling from 0.873 to ~0.855 between steps 250
+and 400. Starting the window later, there is no detectable trend:
+
+| window | slope/step | p |
+|---|---|---|
+| 250-999 | −2.61e-05 | 0.001 |
+| 400-999 | −1.47e-05 | 0.179 |
+| 500-999 | −1.48e-05 | 0.299 |
+| 700-999 | −1.51e-05 | 0.623 |
+
+**Stated as a bound rather than an absence**, because 600 steps of a statistic
+with per-step sd ~0.05 can only rule out so much: any sustained decay is slower
+than roughly **0.024 per 1000 steps**, the detection limit here. For scale, the
+documented ungated collapse ran at −0.0035/step (0.80 → ~0.10 in 200 steps),
+134x faster than even the transient slope; at the detection limit it would take
+>30,000 steps to reach 0.10.
+
+`unique_smiles_frac` shows no trend (p = 0.128 from step 250). `c_mean` rises
++0.0276 over 750 steps (p < 0.001) while scaffold is flat — the Goodhart
+direction, at a rate that does not matter over any horizon anyone will run.
+
+Caveats: **one seed, one configuration.** 6 tests were run on this trajectory,
+and the two significant results survive x6 (scaffold transient 0.006, C rise
+<0.001). Validity min 0.9844, mean 0.9998 across all 1000 steps.
 
 ### 1.11 Generation has only ever been run on BBBP **[untested]**
 B3DB is trained and benchmarked on the classifier side but has never been used

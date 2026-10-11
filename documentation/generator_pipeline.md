@@ -249,12 +249,24 @@ training molecules inside the reported survivors. `in_training_flat` now governs
 exclusion and `in_training_set` keeps the old number visible. Survivors fell
 1891 -> 1746 as a result.
 
-**Novelty is weaker than the survivor count suggests.** Of the top 25, 13 share a
-Murcko scaffold with a training molecule and 12 do not. The top-ranked survivors
-are recognizable CNS pharmacophores — phenothiazines, dibenzazepines,
-benzhydryl-piperazines — which is what recombining BRICS fragments of CNS drugs
-should produce. Constitutional novelty is screened; scaffold novelty is reported,
-not enforced.
+**Novelty is weaker than the survivor count suggests, but less so than an
+earlier version of this section said.** Scaffold overlap with the training
+corpus:
+
+| set | n | shares a training Murcko scaffold |
+|---|---|---|
+| **all survivors** | 1717 | **36.8%** |
+| top 25 by `C` | 25 | 52.0% |
+
+An earlier version quoted the 52% figure (13 of 25) as the headline. That is the
+ranked display set, not the population — see the ranking caveat below. The
+population figure is 36.8%, so roughly **two thirds of survivors carry a
+scaffold not in training**. Constitutional novelty is screened; scaffold novelty
+is reported, not enforced.
+
+The top-ranked survivors are recognizable CNS pharmacophores — phenothiazines,
+dibenzazepines, benzhydryl-piperazines — which is what recombining BRICS
+fragments of CNS drugs should produce.
 
 **The top 25 are the greasy extreme of the survivor set, and that is a property
 of the ranking rather than of the generator.** Measured against real BBB+ drugs
@@ -277,11 +289,26 @@ Ranking by **absolute `C`** selects the greasy extreme. The relationship is
 invisible globally — Spearman(C, CNS-MPO) = −0.032, p = 0.18 across all
 survivors — because it is confined to roughly the top 1% that the ranking picks.
 
+The same selection explains two other figures that should not be read off those
+25 rows:
+
+| | top 25 by `C` | all survivors | real BBB+ drugs |
+|---|---|---|---|
+| mean `C` | 0.995 | 0.851 | 0.903 |
+| above 0.99 | 100% | 4.8% | 15.5% |
+| shares a training scaffold | 52.0% | 36.8% | — |
+
+**The survivor set is LESS `C`-saturated than real drugs** (0.851 vs 0.903, 4.8%
+vs 15.5% above 0.99). The top 25 sit at `C` ~ 1.0 *because they are the top 25
+by `C`* — quoting that as a saturation signature is circular, and an earlier
+version of this document came close to doing so.
+
 Consequence for anyone reading `candidates.csv`: **those 25 rows are not
-representative of the 1746.** If the intended use is a property-balanced
-shortlist, rank on something other than absolute `C`, or report CNS-MPO
-alongside it. No reward-side change is implied; the generator's output is
-already real-drug-like on these four properties.
+representative of the 1746**, on greasiness, on saturation, or on scaffold
+novelty. If the intended use is a property-balanced shortlist, rank on something
+other than absolute `C`, or report CNS-MPO alongside it. No reward-side change is
+implied — the generator's output is already real-drug-like on these four
+properties and less saturated than real drugs on `C`.
 
 ## 5. What the output is not
 

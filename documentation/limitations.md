@@ -523,11 +523,37 @@ Redundancy was not the obstacle — uncertainty correlates with `C` at
 rho = −0.095 on generated molecules, so it would have added independent
 information had there been any.
 
-`mc_dropout.py`'s own docstring anticipates the member-spread result: three
-members sharing a featurizer, a split and a skeleton may be too similar to
-disagree, so low spread cannot be read as genuine certainty. **No mechanism is
-proposed** for why generated molecules draw *more* agreement — the measurement
-rules the term out either way, and this data cannot support an explanation.
+**Why member spread reverses: saturation, and the size of the effect depends on
+the scale.** Member spread is partly a function of position on the sigmoid
+rather than of confidence. Measured on 400 real BBBP molecules:
+
+| scale | corr(spread, abs(C − 0.5)) | mid-to-top collapse |
+|---|---|---|
+| probability | **−0.917** | 25.2x (0.2657 → 0.0105) |
+| **logit** (what `mc_dropout.py` computes) | **−0.453** | 2.0x (1.342 → 0.664) |
+
+On the probability scale the confound is near-total and member spread is
+*structurally* unusable as an applicability domain: maximizing `C` would
+minimize spread automatically, so a penalty on it would reward the saturated
+region twice, once through `C` and once through apparent certainty.
+
+**On the logit scale that argument is much weaker** — r = −0.453 is about 20%
+shared variance, not near-determinism — and the logit transform exists in
+`mc_dropout.py` for exactly this reason. The AUC of 0.477 above was already
+computed on the logit scale, so **the empirical failure holds on the
+less-confounded scale and is not explained by saturation alone.** Anyone
+reviving this must say which scale they mean; the two give different verdicts on
+whether the estimator is unusable in principle or merely useless in practice.
+
+**MC dropout is not confounded.** The same check gives corr(MC-dropout
+uncertainty, abs(C − 0.5)) = **−0.006** (Spearman +0.074), with no collapse
+across C bands (1.0x). So of the two estimators, MC dropout is weak but clean
+and member spread is weak and partly confounded. If the applicability-domain
+idea is revisited, MC dropout is the one still standing.
+
+`mc_dropout.py`'s own docstring anticipated the member-spread problem from a
+different angle: three members sharing a featurizer, a split and a skeleton may
+be too similar to disagree, so low spread cannot be read as genuine certainty.
 
 ---
 

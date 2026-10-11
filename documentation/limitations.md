@@ -186,9 +186,49 @@ Caveats: **one seed, one configuration.** 6 tests were run on this trajectory,
 and the two significant results survive x6 (scaffold transient 0.006, C rise
 <0.001). Validity min 0.9844, mean 0.9998 across all 1000 steps.
 
-### 1.11 Generation has only ever been run on BBBP **[untested]**
-B3DB is trained and benchmarked on the classifier side but has never been used
-as a generation target.
+### 1.11 Generation has only ever been run on BBBP **[measured]**
+*B3DB generation works — validity and duplicate-freedom match BBBP. But the
+diversity-RAISING effect is **BBBP-specific**, and that is established at
+matched policy drift rather than at a matched coefficient.*
+
+`results/brics_b3db/` — B3DB warm start (30 epochs, nll 1.5336, 100% valid),
+then GRPO at five coefficients, 250 steps, reward seed 0, GRPO seed 0. B3DB's
+action space is ~11.6k actions against BBBP's 6051 (4795 fragments vs 2484).
+
+| arm | measured KL | scaffold | start | delta | p | unique | C | valid |
+|---|---|---|---|---|---|---|---|---|
+| **BBBP kl=1.0** | 0.482 | 0.887 | 0.839 | **+0.048** | 0.0007 | 0.986 | 0.871 | 0.9996 |
+| B3DB kl=0.1 | 0.913 | 0.441 | 0.843 | **−0.402** | <1e-30 | 0.526 | 0.963 | 0.9998 |
+| **B3DB kl=0.3** | **0.503** | 0.687 | 0.843 | **−0.156** | <1e-13 | 0.792 | 0.929 | 0.9998 |
+| B3DB kl=1.0 | 0.097 | 0.831 | 0.856 | −0.025 | 0.096 | 0.983 | 0.843 | 0.9999 |
+| B3DB kl=3.0 | 0.038 | 0.825 | 0.858 | −0.032 | 0.080 | 0.985 | 0.747 | 0.9998 |
+| B3DB kl=10.0 | 0.011 | 0.853 | 0.850 | +0.003 | 0.849 | 0.984 | 0.682 | 0.9997 |
+
+**The decisive row is B3DB kl=0.3**, where measured KL is 0.503 against BBBP's
+0.482 — matched drift, 1.04x. At matched drift BBBP *gains* 0.048 of scaffold
+diversity and B3DB *loses* 0.156. Opposite signs, both far past the x6
+Bonferroni threshold of 0.0083. So the effect is a property of the BBBP
+objective, not of the coefficient.
+
+**Comparing at a matched coefficient would have given the wrong answer**, and
+nearly did. At kl=1.0 B3DB simply shows no change (p = 0.096), which reads as a
+weak null; the coefficient delivers 5x less drift there than it does on BBBP.
+Matching by measured effect is what makes the comparison interpretable — the
+same lesson as §4c on `kl_coef` not transplanting across action spaces.
+
+**There is no good operating point on B3DB.** Either the policy barely moves
+(kl=10.0: KL 0.011, C 0.682, scaffold preserved at 0.853 because almost nothing
+was learned) or it learns and degrades diversity (kl=0.3: C 0.929, scaffold
+0.687, unique 0.792). BBBP has a setting that does both; B3DB does not, at least
+not among these five.
+
+What transfers regardless: **sanitization validity 0.9997–0.9999 at every
+coefficient**, and duplicate-freedom at kl >= 1.0 (unique 0.983–0.985). The
+assembly engine is dataset-independent; the reward's behaviour is not.
+
+Caveats: one GRPO seed and one warm start per cell. 6 start-vs-end tests across
+the item, threshold x6 = 0.0083; the two significant results clear it by >10
+orders of magnitude and the BBBP reference clears it at 0.0042.
 
 ---
 

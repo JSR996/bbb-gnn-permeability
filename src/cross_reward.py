@@ -37,13 +37,22 @@ from .reward import load_frozen_classifier, load_frozen_hybrid, sanitizable
 
 RDLogger.DisableLog("rdApp.*")
 
+# Three ARMS, two CLASSIFIERS. The gate arm uses the same classifier as arm A;
+# what differs is whether C is a reward term or a hurdle, so its in-loop column
+# is the ensemble one -- but it was never paid to climb that column, which is
+# the point of including it here.
 ARMS = {
-    "A: trained on ensemble": ROOT / "results" / "candidates" / "brics10" / "screened.csv",
-    "B: trained on hybrid_batch": ROOT / "results" / "candidates" / "brics_hybrid" / "screened.csv",
+    "A: ensemble as term": ROOT / "results" / "candidates" / "brics10" / "screened.csv",
+    "B: hybrid_batch as term": ROOT / "results" / "candidates" / "brics_hybrid" / "screened.csv",
+    "GATE: ensemble as hurdle": ROOT / "results" / "candidates" / "brics_cgate" / "screened.csv",
 }
 OUT = ROOT / "results" / "pubchem" / "cross_reward.csv"
-TRAINED_ON = {"A: trained on ensemble": "ensemble",
-              "B: trained on hybrid_batch": "hybrid_batch"}
+TRAINED_ON = {"A: ensemble as term": "ensemble",
+              "B: hybrid_batch as term": "hybrid_batch",
+              # gated, never rewarded -- marked separately so the * in the
+              # table does not claim it was an optimization target
+              "GATE: ensemble as hurdle": "ensemble"}
+GATED = {"GATE: ensemble as hurdle"}
 
 
 def _score(smiles: list[str], classify, batch: int = 256) -> np.ndarray:
@@ -122,14 +131,16 @@ def main() -> None:
             continue
         e, h = sub.R_ensemble.mean(), sub.R_hybrid_batch.mean()
         own = TRAINED_ON[arm]
-        mark = lambda k: " *" if k == own else "  "
+        gated = arm in GATED
+        mark = lambda k: (" g" if gated else " *") if k == own else "  "
         print(f"{arm:<30} {e:>10.4f}{mark('ensemble')} {h:>14.4f}{mark('hybrid_batch')}")
     print("-" * 74)
     print(f"{'real BBB+ (control)':<30} {real['ensemble'][ry == 1].mean():>10.4f}   "
           f"{real['hybrid_batch'][ry == 1].mean():>14.4f}")
     print(f"{'real BBB- (control)':<30} {real['ensemble'][ry == 0].mean():>10.4f}   "
           f"{real['hybrid_batch'][ry == 0].mean():>14.4f}")
-    print("\n  * = the reward that arm was trained against (in-loop)")
+    print("\n  * = optimized against (in-loop)   "
+          "g = gated on, never rewarded")
 
     print(f"\n{'=' * 74}\nOFF-DIAGONAL: does the signal transfer?\n{'=' * 74}")
     for arm in ARMS:

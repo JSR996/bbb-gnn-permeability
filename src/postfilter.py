@@ -201,7 +201,79 @@ def novelty(df: pd.DataFrame, dataset: str = "bbbp") -> pd.DataFrame:
     return df
 
 
-def report(df: pd.DataFrame, top: int = 25) -> pd.DataFrame:
+#: Permeability as a requirement for the shortlist, at the same threshold the
+#: reward gate uses: the 5th percentile of real BBB+ molecules under the
+#: ensemble classifier. Calibrated on the positive class, never on generated
+#: output.
+RANK_MIN_C = 0.615
+RANK_BY = ("c_score", "mpo", "mpo_gated")
+
+
+def add_mpo(df: pd.DataFrame) -> pd.DataFrame:
+    """CNS-MPO (Wager, 5 of 6 terms) per molecule, reusing hybrid_features.
+
+    Normalized to [0, 1] by dividing by 5, because that implementation omits
+    the basic-pKa term rather than fabricating it -- so its maximum is 5, not 6.
+    """
+    from rdkit.Chem import Crippen, Descriptors, Lipinski
+
+    from .hybrid_features import CNSMPO
+
+    vals = []
+    for s in df.smiles:
+        m = Chem.MolFromSmiles(s)
+        if m is None:
+            vals.append(np.nan)
+            continue
+        composite, _ = CNSMPO.score(Descriptors.MolWt(m), Crippen.MolLogP(m),
+                                    Descriptors.TPSA(m), Lipinski.NumHDonors(m))
+        vals.append(composite / 5.0)
+    df = df.copy()
+    df["cns_mpo"] = vals
+    return df
+
+
+def rank(survivors: pd.DataFrame, by: str, top: int) -> pd.DataFrame:
+    """Order the shortlist. WHY NOT ABSOLUTE C, WHICH WAS THE DEFAULT.
+
+    Ranking by absolute C selects the lipophilic extreme of the survivor set.
+    Measured: the top 25 by C run logP 4.89 and TPSA 14.4 against the
+    population's 3.04 and 49.9, and against real BBB+ drugs' 2.67 and 54.1.
+    The population is drug-like; the 25 rows anyone actually reads are not.
+
+    That is the permeability objective's bias -- the same gradient that once
+    found carbon tetrachloride -- acting inside the size-gated space. And it is
+    a property of the RANKING, not of the generator: the C-gate arm shows the
+    same drift (+2.02 logP) despite never optimizing C, so no reward change
+    fixes it.
+
+    `mpo_gated` is the honest default for a shortlist: require permeability at
+    the real-BBB+ 5th percentile, then order by CNS-MPO -- permeability as a
+    hurdle, drug-likeness as the objective. `c_score` is kept so the original
+    candidate files reproduce exactly. `mpo` drops the permeability
+    requirement and is a diagnostic only.
+    """
+    if by == "c_score":
+        return survivors.sort_values("c_score", ascending=False).head(top)
+    # CNS-MPO SATURATES AND MUST BE TIE-BROKEN. 950 of the 9722 survivors that
+    # clear the C hurdle score a perfect 1.000, so "top 25 by MPO" would be an
+    # arbitrary 25 of 950 -- the same defect as ranking a saturated C, which is
+    # what this function exists to fix. Sorting by (MPO, C) breaks the tie on
+    # permeability *within* ideal drug-space, which is the question being asked.
+    if by == "mpo":
+        return survivors.sort_values(["cns_mpo", "c_score"],
+                                     ascending=False).head(top)
+    if by == "mpo_gated":
+        ok = survivors[survivors.c_score >= RANK_MIN_C]
+        if not len(ok):
+            print(f"  !! no survivor reaches C >= {RANK_MIN_C}; using mpo alone")
+            ok = survivors
+        return ok.sort_values(["cns_mpo", "c_score"], ascending=False).head(top)
+    raise ValueError(f"unknown rank_by {by!r}")
+
+
+def report(df: pd.DataFrame, top: int = 25,
+           rank_by: str = "c_score") -> pd.DataFrame:
     total = len(df)
     survivors = df[df["passes"] & ~df["in_training_flat"]].copy()
     print("=" * 74)
@@ -241,18 +313,26 @@ def report(df: pd.DataFrame, top: int = 25) -> pd.DataFrame:
     print("  liabilities and says nothing about the ones no catalogue encodes.")
     print("  Every survivor is a hypothesis for evaluation, not for synthesis.")
 
-    return survivors.sort_values("c_score", ascending=False).head(top)
+    survivors = add_mpo(survivors)
+    ranked = rank(survivors, rank_by, top)
+    if len(survivors) and survivors.cns_mpo.notna().any():
+        print(f"\n  ranked by {rank_by}. CNS-MPO (Wager 5/6, normalized):")
+        print(f"    all survivors            : {survivors.cns_mpo.mean():.3f}")
+        print(f"    the shortlist ({len(ranked)})        : {ranked.cns_mpo.mean():.3f}")
+        print(f"    real BBB+ drugs reference: 0.753")
+    return ranked
 
 
 def main(run_dirs: list[Path], from_step: int, out: Path, dataset: str,
-         device: str, min_heavy_atoms: int, top: int) -> None:
+         device: str, min_heavy_atoms: int, top: int,
+         rank_by: str = "c_score") -> None:
     smiles = pool_samples(run_dirs, from_step)
     print(f"pooled {len(smiles)} distinct molecules from {len(run_dirs)} run(s) "
           f"at step >= {from_step}\n")
     if not smiles:
         return
     df = novelty(add_scores(screen(smiles, min_heavy_atoms), dataset, device), dataset)
-    ranked = report(df, top)
+    ranked = report(df, top, rank_by)
 
     out.mkdir(parents=True, exist_ok=True)
     df.to_csv(out / "screened.csv", index=False)
@@ -272,9 +352,13 @@ if __name__ == "__main__":
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--min-heavy-atoms", type=int, default=10)
     ap.add_argument("--top", type=int, default=25)
+    ap.add_argument("--rank-by", default="c_score", choices=RANK_BY,
+                    help="how to order the shortlist. c_score is the original "
+                         "and selects the lipophilic extreme; mpo_gated "
+                         "requires C >= 0.615 then orders by CNS-MPO")
     args = ap.parse_args()
     main(args.run_dirs, args.from_step, args.out, args.dataset, args.device,
-         args.min_heavy_atoms, args.top)
+         args.min_heavy_atoms, args.top, args.rank_by)
 
 
 def sample_batches(checkpoints: list[Path], n_batches: int, group_size: int,

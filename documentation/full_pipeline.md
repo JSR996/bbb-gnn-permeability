@@ -681,3 +681,53 @@ removes it.
    twelve observations is describing that observation, not the populations.
 
 `documentation/limitations.md` holds all of this in full, with the retractions.
+
+---
+
+## 10. The shortlist ranking (branch `ranking-v2`)
+
+`candidates.csv` ranked by absolute `C`, and that was the last place the
+permeability objective's bias was still operative. The population is fine — the
+ranking was not.
+
+| | logP | TPSA | QED | CNS-MPO | `C` |
+|---|---|---|---|---|---|
+| all 11329 survivors | 3.12 | 50.1 | 0.68 | 0.714 | 0.826 |
+| **top 25 by `C`** (old) | **5.15** | **18.9** | 0.64 | **0.487** | 0.997 |
+| **top 25 by `mpo_gated`** (new) | 1.24 | 52.3 | **0.79** | **1.000** | 0.988 |
+| real BBB+ drugs | 2.67 | 54.1 | 0.67 | 0.753 | — |
+
+**This is a ranking defect, not a generator or reward defect.** The C-gate arm
+shows the same drift (+2.02 logP) despite never optimizing `C`, so no reward
+change fixes it. Only the sort does.
+
+`mpo_gated` requires `C ≥ 0.615` — the real-BBB+ 5th percentile, the same
+threshold the reward gate uses — then orders by CNS-MPO (Wager 5 of 6, from
+`hybrid_features.CNSMPO`, normalized by 5 because the basic-pKa term is omitted
+rather than fabricated). Permeability becomes the hurdle and drug-likeness the
+objective, which is the same move the reward gate makes.
+
+**CNS-MPO saturates too, and that had to be handled.** 950 of the 9722
+survivors clearing the `C` hurdle score a perfect 1.000, so "top 25 by MPO"
+would have been an arbitrary 25 of 950 — precisely the defect being fixed. The
+sort is `(MPO, C)` descending, breaking the tie on permeability *within* ideal
+drug-space. The result keeps `C` at 0.988 while moving MPO from 0.487 to 1.000.
+
+The new shortlists are recognizable medicinal chemistry — pyrimidinyl-
+piperazines, trimethoxybenzamides, morpholino-propanones — rather than the
+greasy extreme.
+
+```bash
+python -m src.postfilter results/brics_cgate/* --from-step 150 \
+    --rank-by mpo_gated --out results/candidates_mpo/brics_cgate
+```
+
+`--rank-by` defaults to `c_score`, so every existing candidate file reproduces
+byte-identically; the re-ranked sets live in `results/candidates_mpo/` and the
+originals under `results/candidates/` are untouched.
+
+**One caveat.** CNS-MPO is a desirability composite, not a measurement. Ranking
+by it selects molecules that sit in the textbook-ideal band — logP 1.24 against
+real drugs' 2.67 — so the shortlist is *more* idealized than real CNS drugs,
+not merely more drug-like. That is a defensible target for a hypothesis list
+and it is still a model of desirability, not evidence about any molecule.

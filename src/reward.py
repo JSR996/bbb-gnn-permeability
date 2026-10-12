@@ -285,7 +285,8 @@ def sanitizable(smiles: str) -> Chem.Mol | None:
 
 def score_terms(smiles: list[str], classify, tox=None,
                 min_heavy_atoms: int = 0, min_mw: float = 0.0,
-                alert_lambda: float = 0.0) -> dict[str, np.ndarray]:
+                alert_lambda: float = 0.0, min_c: float = 0.0
+                ) -> dict[str, np.ndarray]:
     """Per-molecule stationary reward terms. Invalid rows are left at zero.
 
     `tox` is an optional frozen toxicity scorer (src.tox.load_frozen_tox). It
@@ -355,8 +356,28 @@ def score_terms(smiles: list[str], classify, tox=None,
             # toxicity model sees exactly the molecule the other terms did.
             t[idx] = 1.0 - np.asarray(tox([Chem.MolToSmiles(m) for m in mols]))
 
+    # PERMEABILITY AS A GATE RATHER THAN A DIRECTION. Applied after classify()
+    # because, unlike the size gates above, it needs C to exist first.
+    #
+    # Why a gate: `assemble` is a weighted sum, so a monotone C term pays the
+    # policy to climb toward whatever maximizes C -- and what maximizes C is
+    # carbon tetrachloride, which BBBP labels BBB+ correctly because it really
+    # does cross the barrier (limitations 3.1). The same argument already
+    # justified gating size rather than rewarding it: a gate has no gradient to
+    # climb at all. Pair this with `--drop C` so permeability is a REQUIREMENT
+    # and the optimization pressure sits on Q/S/D instead.
+    #
+    # This is nearly free: limitations 1.7 measured mean_C at 0.786 with
+    # w_C = 0, against BBBP's own 0.745 -- the policy's permeability is mostly a
+    # side effect of what the other terms select for, not something it chases.
+    subthreshold = np.zeros(n, dtype=bool)
+    if min_c:
+        below = valid & (c < min_c)
+        subthreshold[below] = True
+        valid[below] = False
+
     return {"valid": valid, "c": c, "qed": qed, "sa": sa, "t": t, "a": a,
-            "undersized": undersized}
+            "undersized": undersized, "subthreshold": subthreshold}
 
 
 def weights_at(
@@ -701,6 +722,38 @@ def _self_check() -> None:
     # exactly this failure: CCl4 is MW 153.8, so a 150 cutoff lets it through
     # while the heavy-atom count catches it at 5. Halogens are heavy, and
     # weight is a poor proxy for the molecular complexity actually wanted.
+    # WHAT THE C GATE DOES NOT DO: reject solvents. Carbon tetrachloride scores
+    # C = 0.987, far above any threshold calibrated on real BBB+ molecules,
+    # because it genuinely is among the most permeable things in BBBP. A gate on
+    # C removes LOW-C molecules; it can never remove the tiny-solvent failure,
+    # and it is the SIZE gate that does that (5 heavy atoms vs min 10).
+    #
+    # Its value is removing the gradient, not filtering: with w_C = 0 the policy
+    # is no longer paid to climb toward maximal C, so it stops being pulled
+    # toward the small-lipophilic corner where solvents live. The assertion
+    # below pins that down so nobody later reads the gate as a solvent filter.
+    solvent, drug = "ClC(Cl)(Cl)Cl", "O=C(CCCN1CCC(O)(c2ccc(Cl)cc2)CC1)c1ccc(F)cc1"
+    # Distinct names: `gated` belongs to the size-gate block above and is read
+    # again by the summary print at the end of this function.
+    c_open = score_terms([solvent, drug], classify)
+    assert c_open["valid"].all(), "both should be valid with no gate"
+    assert c_open["c"][0] > 0.6, f"probe assumes a high-C solvent, got {c_open['c'][0]:.3f}"
+    c_gated = score_terms([solvent, drug], classify, min_c=0.615)
+    assert c_gated["valid"][0] and not c_gated["subthreshold"][0], (
+        "a C gate must NOT remove a high-C solvent -- if this ever fires, the "
+        "threshold has been raised past the real-BBB+ distribution and the gate "
+        "is now rejecting genuine CNS drugs too"
+    )
+    assert c_gated["valid"][1], "haloperidol must survive a gate set at the real-BBB+ p5"
+    # It does remove a genuinely impermeable molecule, which is its actual job.
+    low = score_terms(["NC(=O)c1ccc(N)cc1S(=O)(=O)O"], classify, min_c=0.615)
+    assert low["subthreshold"][0] and not low["valid"][0], low
+    # C itself is still logged for diagnostics even when the row is gated out.
+    assert c_gated["c"][0] == c_open["c"][0]
+    # And a gate of 0 must change nothing at all.
+    assert np.array_equal(score_terms([solvent, drug], classify, min_c=0.0)["valid"],
+                          c_open["valid"])
+
     assert not score_terms(["ClC(Cl)(Cl)Cl"], classify, min_mw=150.0)["undersized"][0]
     assert score_terms(["ClC(Cl)(Cl)Cl"], classify, min_mw=200.0)["undersized"][0]
     assert score_terms(["FC(F)(F)F"], classify, min_mw=150.0)["undersized"][0]
@@ -773,6 +826,10 @@ def _self_check() -> None:
 
     print(f"C(aspirin)={terms['c'][0]:.3f}  QED={terms['qed'][0]:.3f}  "
           f"SA_norm={terms['sa'][0]:.3f}  R={r[0]:.3f}")
+    print(f"C gate at 0.615: solvent C={c_open['c'][0]:.3f} "
+          f"{'GATED OUT' if c_gated['subthreshold'][0] else 'KEPT'}, "
+          f"haloperidol C={c_open['c'][1]:.3f} "
+          f"{'kept' if c_gated['valid'][1] else 'GATED OUT'}")
     print(f"size gate: {int(gated['undersized'].sum())}/3 solvents removed, "
           f"both drugs kept")
     print(f"geometric veto: QED->0 drops reward to {b_gm / g_gm:.1%} of baseline "

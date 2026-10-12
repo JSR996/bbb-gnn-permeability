@@ -196,6 +196,12 @@ def train(
     # batch-independence on the exact checkpoints before returning. Do not
     # route a BatchNorm model in any other way.
     reward_family: str = "ensemble",
+    # Permeability as a gate instead of a reward term. 0 disables it. 0.615
+    # admits 95% of real BBB+ molecules under the ensemble reward, i.e. "at
+    # least as permeable as 95% of known BBB+ drugs" -- calibrated on the
+    # positive class, never on generated output. Use WITH drop=("C",) or the
+    # monotone term is still there to climb.
+    min_c: float = 0.0,
 ) -> dict:
     # Which pretrained decoder seeds theta_0, and therefore pi_ref, since
     # Eq. (18) sets pi_ref := pi_theta0. Swapping it swaps the KL anchor too,
@@ -286,7 +292,7 @@ def train(
         roll = gen.sample(group_size, max_len=max_len, device=device)
 
         # --- 2. reward against a single frozen phi snapshot ------------------
-        terms = score_terms(roll["smiles"], classify, tox=toxic,
+        terms = score_terms(roll["smiles"], classify, tox=toxic, min_c=min_c,
                             min_heavy_atoms=min_heavy_atoms, min_mw=min_mw,
                             alert_lambda=alert_lambda)
         d_scores = disc.score(roll["smiles"], device=device)
@@ -480,6 +486,7 @@ def train(
             "generator": generator,
             "reward_seed": reward_seed,
             "reward_family": reward_family,
+            "min_c": min_c,
             "ent_coef": ent_coef,
             # Thread count is part of the configuration, not of the machine.
             # OpenMP changes the order of float reductions, and this training
@@ -639,6 +646,10 @@ if __name__ == "__main__":
     ap.add_argument("--ent-coef", type=float, default=0.0,
                     help="entropy bonus on the policy. Acts on per-step "
                          "peakedness, which is the axis KL does not reach")
+    ap.add_argument("--min-c", type=float, default=0.0,
+                    help="gate out molecules with C below this instead of "
+                         "rewarding C. Use with --drop C. 0.615 admits 95%% of "
+                         "real BBB+ molecules under the ensemble reward")
     ap.add_argument("--reward-family", default="ensemble",
                     choices=["ensemble", "hybrid_batch"],
                     help="which classifier provides C. ensemble is "
@@ -664,7 +675,7 @@ if __name__ == "__main__":
               drop=tuple(t for t in args.drop.split(",") if t),
               warm_start=args.warm_start, threads=args.threads,
               generator=args.generator, reward_seed=args.reward_seed,
-              reward_family=args.reward_family,
+              reward_family=args.reward_family, min_c=args.min_c,
               ent_coef=args.ent_coef)
     else:
         _self_check()

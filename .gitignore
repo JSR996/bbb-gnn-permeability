@@ -17,3 +17,8 @@ bbb-gnn-permeability/
 
 # Overnight sweep shard scripts and logs
 logs/
+
+# Rendered molecule atlases: 686 MB of PDFs, regenerable in ~17 min with
+# `python -m src.molecule_atlas --all`. Committing them would roughly quadruple
+# an artifact footprint the README already flags as a problem.
+results/atlas/

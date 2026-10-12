@@ -392,6 +392,49 @@ signature.
 If the intended use is a property-balanced shortlist, rank on something other
 than absolute `C`, or report CNS-MPO alongside it.
 
+### Permeability as a gate: a large diversity win, and no help at all on the objective
+
+A third arm replaces the monotone `C` term with a hurdle —
+`--drop C --min-c 0.615` — on the reasoning that `assemble` is a weighted sum,
+so a monotone term pays the policy to *climb* toward whatever maximizes `C`.
+τ = 0.615 is the 5th percentile of real BBB+ molecules under the ensemble
+reward, calibrated on the positive class and never on generated output. Ten
+seeds, matched to arm A otherwise.
+
+| | A: `C` as term | GATE |
+|---|---|---|
+| pooled distinct molecules | 19219 | **33227** (+73%) |
+| survivors | 6591 | **11329** (+72%) |
+| survival rate | 34% | 34% |
+| training molecules reproduced | 1747 (88.9% of corpus) | **1345 (68.4%)** |
+| novel, whole pool | 72.0% | **79.4%** |
+| novel survivors | 4520 | **7857** (+74%) |
+| `C` among survivors | 0.854 | 0.826 |
+| survivors above `C` 0.95 | 43% | 35% |
+
+**This is the largest single improvement measured on the generation half.** The
+policy explores far more, reproduces 400 fewer of its own training molecules,
+and stays permeable — survivor `C` 0.826 against BBBP's own mean of 0.745,
+exactly as limitations 1.7 predicted when it measured `mean_C` at 0.786 with
+`w_C = 0`.
+
+**Two numbers that look like results and are not.** `valid_frac` falls
+0.979 → 0.854, but RDKit sanitization is unchanged (0.9997 → 0.9996): the drop
+is molecules gated out by `C`, which is the mechanism working. And `mean_C`
+*rises* in-training (0.888 → 0.906) purely because the gate truncates `C`'s low
+tail — a selection effect, not an improvement. Within-group scaffold diversity
+falls 0.851 → 0.820 (p = 0.19, not significant) while pooled distinct output
+rises 73%; those are the two different statistics of 4.3/4.4, not a
+contradiction.
+
+**It does nothing for the objective, and cannot.** Carbon tetrachloride scores
+`C = 0.987` and passes any threshold calibrated on real BBB+ drugs, because it
+genuinely is among the most permeable molecules in BBBP. A gate on `C` removes
+*low*-`C` molecules. The undersized fraction barely moves (2.05% → 1.87%) and
+the **size** gate remains the only thing that blocks tiny solvents. Layer 3
+needs a label that separates "is a drug" from "crosses a membrane" — see §9 —
+and nothing derived from a permeability classifier can supply one.
+
 ### Two rewards, two arms: the generator does not depend on its judge
 
 The pipeline has two classifiers (§4), and the generator was originally trained

@@ -61,18 +61,67 @@ WARM_START = ROOT / "results" / "generator" / "bbbp_brics_pretrained.pt"
 POLICY_SEEDS = list(range(10))
 FROM_STEP = 150      # policy has settled by here in a 250-step run
 
-BRICS_DIR = ROOT / "results" / "brics_kl1"
-CANDIDATES = ROOT / "results" / "candidates" / "brics10"
+# --- the three arms, and why the default is the one it is -------------------
+# Measured across all three (documentation/full_pipeline.md S10 and the two
+# sections above it):
+#
+#   swapping the reward CLASSIFIER changes nothing. Arm B scores Cohen's
+#   d = 0.002 on QED and 0.016 on CNS-MPO against arm A, paired p = 0.73 on
+#   scaffold diversity, and an identical census to one decimal. hybrid_batch is
+#   the better classifier -- BBBP 0.921 against ~0.88 -- and that accuracy does
+#   not reach the molecules.
+#
+#   changing the FORMULATION changes a great deal. Making C a hurdle instead of
+#   a reward term gives +73% distinct output, drops memorization from 88.9% to
+#   68.4% of the training corpus, and yields +74% novel candidates, for ~0.03 of
+#   normalized permeability and 12.5% of samples gated out.
+#
+# So the default arm is `cgate`, and it keeps the GraphNorm ensemble as the
+# reward: it is batch-independent by construction rather than by an eval()
+# guard that must be asserted on every load, and hybrid_batch buys nothing back.
+# Arms `a` and `b` stay reachable so both published comparisons reproduce.
+ARMS = {
+    "cgate": dict(
+        runs="brics_cgate", candidates="candidates_mpo/brics_cgate",
+        reward_family="ensemble", drop=("C",), min_c=0.615,
+        rank_by="mpo_gated",
+        note="C as a hurdle, ranked by CNS-MPO -- the recommended pipeline",
+    ),
+    "a": dict(
+        runs="brics_kl1", candidates="candidates/brics10",
+        reward_family="ensemble", drop=(), min_c=0.0, rank_by="c_score",
+        note="C as a reward term, ranked by C -- the original",
+    ),
+    "b": dict(
+        runs="brics_hybrid", candidates="candidates/brics_hybrid",
+        reward_family="hybrid_batch", drop=(), min_c=0.0, rank_by="c_score",
+        note="as (a) but rewarded by the hybrid_batch classifier",
+    ),
+}
+for _k, _v in ARMS.items():
+    _v["_name"] = _k
+DEFAULT_ARM = "cgate"
+ARM = ARMS[DEFAULT_ARM]          # rebound by main() when --arm is passed
 
-# Policy seeds 0-2 are already committed, under two incompatible naming
+
+def brics_dir() -> Path:
+    return ROOT / "results" / ARM["runs"]
+
+
+def candidates_dir() -> Path:
+    return ROOT / "results" / ARM["candidates"]
+
+
+# Arm A's policy seeds 0-2 are committed under two incompatible naming
 # conventions, and `rs0_ws0`/`rs0_ws1` differ ONLY in warm start -- identical
 # seed and reward_seed. So a run directory's NAME tells you nothing; every axis
-# is read from its config.json. New runs use one convention, pseed<n>.
+# is read from its config.json. Everything else uses one convention, pseed<n>.
 LEGACY_DIRS = {0: "rs0_ws0", 1: "gseed1", 2: "gseed2"}
 
 
 def run_dir(seed: int) -> Path:
-    return BRICS_DIR / LEGACY_DIRS.get(seed, f"pseed{seed}")
+    legacy = LEGACY_DIRS.get(seed) if ARM["runs"] == "brics_kl1" else None
+    return brics_dir() / (legacy or f"pseed{seed}")
 
 
 def policy_seed_dirs() -> list[Path]:
@@ -83,7 +132,7 @@ def policy_seed_dirs() -> list[Path]:
     start) dirs: those are different axes, not more policy seeds.
     """
     out = []
-    for d in sorted(BRICS_DIR.glob("*")):
+    for d in sorted(brics_dir().glob("*")):
         cfg = d / "config.json"
         if not cfg.exists():
             continue
@@ -230,17 +279,25 @@ def run_generator(force=False):
             print(f"policy seed {seed}: {out.name} already done, skipping")
             continue
         print(f"\npolicy seed {seed} -> {out.name}  (~6 min)")
+        # min_heavy_atoms and min_c are BOTH gates and neither replaces the
+        # other: the size gate is the only thing that blocks tiny solvents
+        # (CCl4 has 5 heavy atoms), while the C gate removes the gradient that
+        # pulls the policy toward them. A C gate cannot reject a solvent --
+        # CCl4 scores C = 0.987 and passes any threshold calibrated on real
+        # BBB+ molecules.
         train(dataset="bbbp", steps=STEPS, group_size=GROUP_SIZE,
               kl_coef=KL_COEF, min_heavy_atoms=MIN_HEAVY_ATOMS,
               seed=seed, reward_seed=REWARD_SEED,
               warm_start=str(WARM_START), out_dir=out,
-              threads=THREADS, generator="brics", device="cpu")
+              threads=THREADS, generator="brics", device="cpu",
+              reward_family=ARM["reward_family"],
+              drop=ARM["drop"], min_c=ARM["min_c"])
 
 
 def plan_screen():
     dirs = policy_seed_dirs()
-    done = (CANDIDATES / "candidates.csv").exists()
-    return (f"{len(dirs)} run dirs -> {CANDIDATES.name}/"
+    done = (candidates_dir() / "candidates.csv").exists()
+    return (f"{len(dirs)} run dirs -> {candidates_dir().name}/"
             + (" (already screened)" if done else "")), not done
 
 
@@ -251,9 +308,15 @@ def run_screen(force=False):
         raise SystemExit("no settled-point run dirs found; run the generator stage first")
     print(f"screening {len(dirs)} runs from step >= {FROM_STEP}: "
           f"{[d.name for d in dirs]}")
-    postfilter_main(run_dirs=dirs, from_step=FROM_STEP, out=CANDIDATES,
+    # rank_by mpo_gated, not c_score: ranking by absolute C selects the
+    # lipophilic extreme of the survivor set (top 25 at logP 5.15 / TPSA 18.9
+    # against the population's 3.12 / 50.1 and real BBB+ drugs' 2.67 / 54.1).
+    # That is a property of the SORT, not the generator -- the C-gate arm shows
+    # the same drift despite never optimizing C.
+    postfilter_main(run_dirs=dirs, from_step=FROM_STEP, out=candidates_dir(),
                     dataset="bbbp", device="cpu",
-                    min_heavy_atoms=MIN_HEAVY_ATOMS, top=25)
+                    min_heavy_atoms=MIN_HEAVY_ATOMS, top=25,
+                    rank_by=ARM["rank_by"])
 
 
 #: The headline scaffold statistic is the mean of the last 25 logged steps of a
@@ -333,6 +396,14 @@ NAMES = [s[0] for s in STAGES]
 
 
 def show_plan() -> None:
+    gates = f"size>={MIN_HEAVY_ATOMS}" + (f", C>={ARM['min_c']}" if ARM["min_c"] else "")
+    print(f"arm      : {ARM['_name']} -- {ARM['note']}")
+    print(f"reward   : {ARM['reward_family']}"
+          + (f", C dropped as a term" if "C" in ARM["drop"] else ", C as a reward term"))
+    print(f"gates    : {gates}")
+    print(f"ranking  : {ARM['rank_by']}")
+    print(f"runs     : {brics_dir().relative_to(ROOT)} -> "
+          f"{candidates_dir().relative_to(ROOT)}\n")
     print(f"{'stage':<12} {'would run':<10} status")
     print("-" * 78)
     for name, plan, _ in STAGES:
@@ -356,18 +427,38 @@ def _self_check() -> None:
 
     # Legacy names must map to the right policy seeds, since inferring them
     # from the directory name is exactly what goes wrong here.
-    assert run_dir(0).name == "rs0_ws0" and run_dir(2).name == "gseed2"
-    assert run_dir(7).name == "pseed7"
+    # Legacy names belong to arm A ONLY. Every other arm uses pseed<n>, and
+    # applying A's mapping to them would silently point at the wrong runs.
+    global ARM
+    saved = ARM
+    try:
+        ARM = ARMS["a"]
+        assert run_dir(0).name == "rs0_ws0" and run_dir(2).name == "gseed2"
+        assert run_dir(7).name == "pseed7"
+        ARM = ARMS["cgate"]
+        assert run_dir(0).name == "pseed0", run_dir(0)
+        assert "brics_cgate" in str(brics_dir())
+        assert "candidates_mpo" in str(candidates_dir())
+        # The recommended arm must gate C rather than reward it, and must not
+        # rank the shortlist by absolute C.
+        assert ARMS["cgate"]["drop"] == ("C",) and ARMS["cgate"]["min_c"] == 0.615
+        assert ARMS["cgate"]["rank_by"] == "mpo_gated"
+        # Arms a and b must stay reproducible: C as a term, ranked by C.
+        for k in ("a", "b"):
+            assert ARMS[k]["drop"] == () and ARMS[k]["min_c"] == 0.0
+            assert ARMS[k]["rank_by"] == "c_score"
+    finally:
+        ARM = saved
 
     # The settled-point selector must exclude the other two axes. rs1_* is a
     # different reward seed, *_ws1 a different warm start; neither is a policy
     # seed, and pooling them would silently widen the "10 seeds" claim.
-    if BRICS_DIR.exists():
+    if brics_dir().exists():
         picked = {d.name for d in policy_seed_dirs()}
         for excluded in ("rs1_ws0", "rs1_ws1", "rs0_ws1"):
-            if (BRICS_DIR / excluded / "config.json").exists():
+            if (brics_dir() / excluded / "config.json").exists():
                 assert excluded not in picked, f"{excluded} is not a policy seed"
-        if (BRICS_DIR / "rs0_ws0" / "config.json").exists():
+        if (brics_dir() / "rs0_ws0" / "config.json").exists():
             assert "rs0_ws0" in picked, "policy seed 0 missing from the screen set"
 
     # No arm may count MORE runs than its grid holds. An over-count means the
@@ -387,7 +478,7 @@ def _self_check() -> None:
     # The headline statistic must reproduce the committed 3-seed figure on the
     # three committed runs. This is the check that keeps the 10-seed number
     # commensurable with the one it supersedes.
-    legacy = [BRICS_DIR / n for n in LEGACY_DIRS.values()]
+    legacy = [ROOT / "results" / "brics_kl1" / n for n in LEGACY_DIRS.values()]
     if all((d / "history.csv").exists() for d in legacy):
         m, sd, _ = scaffold_headline(legacy)
         assert abs(m - 0.8643) < 5e-4, f"3-seed scaffold mean is {m:.4f}, not 0.8643"
@@ -404,9 +495,16 @@ def main() -> None:
     ap.add_argument("--only", choices=NAMES, help="run exactly one stage")
     ap.add_argument("--from", dest="from_stage", choices=NAMES,
                     help="run this stage and everything after it")
+    ap.add_argument("--arm", choices=sorted(ARMS), default=DEFAULT_ARM,
+                    help="cgate (default) is the recommended pipeline: C as a "
+                         "hurdle, ranked by CNS-MPO. a and b reproduce the two "
+                         "published reward-term arms")
     ap.add_argument("--force", action="store_true",
                     help="retrain even where an artifact already exists")
     args = ap.parse_args()
+
+    global ARM
+    ARM = ARMS[args.arm]
 
     if args.self_check:
         return _self_check()

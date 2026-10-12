@@ -109,8 +109,12 @@ def build(arm: str, which: str, limit: int | None = None,
                 el = time.time() - t0
                 print(f"    {p + 1}/{n_pages} pages, {el / 60:.1f} min, "
                       f"eta {(n_pages - p - 1) * el / (p + 1) / 60:.0f} min")
+        # The limit goes in the filename. Without it a quick `--limit 240` look
+        # silently overwrites the full atlas for that arm, which is a 945-page
+        # render to get back.
         suffix = "" if n_parts == 1 else f"_part{part + 1:02d}"
-        out = OUTDIR / f"{arm}_{which}{suffix}.pdf"
+        head = f"{arm}_{which}" + (f"_first{limit}" if limit else "")
+        out = OUTDIR / f"{head}{suffix}.pdf"
         pages[0].save(out, "PDF", save_all=True, append_images=pages[1:],
                       resolution=150.0)
         written.append(out)

@@ -223,7 +223,9 @@ def main() -> None:
           f"in {OUTDIR}")
     print("\n  A hit means the structure is registered in PubChem. It is NOT")
     print("  evidence of permeability, activity or safety, and 'novel' is not")
-    print("  evidence of value -- that bucket holds a trioxide no catalogue flags.")
+    print("  evidence of value: the POOLED bucket holds a trioxide. (That molecule")
+    print("  does NOT survive screening -- 1 targeted + 7 catalogue hits. On")
+    print("  survivors, 16 motifs no screened catalogue encodes match 0 of 11,329.)")
 
 
 if __name__ == "__main__":

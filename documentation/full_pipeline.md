@@ -557,9 +557,18 @@ phenylalanine (994), phenylacetic acid (999).
 **Three limits on the novel figure.** It is an **upper bound**: neither query
 normalizes tautomers, so some "novel" molecules are known in another tautomeric
 form. It means absent from PubChem and the training corpus, not absent from
-every database. And it is not a quality signal — the bucket contains
-`C#CC1(OOOC(O)C(Cl)(Cl)Cl)CCCCC1`, a trioxide no alert catalogue flags. Some of
-that 72% is novel because it is bad.
+every database. And it is not a quality signal — the *pooled* bucket contains
+`C#CC1(OOOC(O)C(Cl)(Cl)Cl)CCCCC1`, a trioxide. Some of that 72% is novel
+because it is bad.
+
+**Correction.** An earlier version of this document said that trioxide passed
+the screen because no catalogue encodes it. **It did not pass.** It carries
+`passes=False` with 1 targeted and 7 catalogue hits, and appears in arm A's
+pool only. The screen caught it eight times over, so it is evidence about the
+*pooled* set and not about survivors. On survivors the stronger statement holds:
+16 motifs none of the screened catalogues encode — peroxides, trioxides, azo,
+diazo, isocyanate, isothiocyanate, sulfonyl halide, carbodiimide, disulfide,
+thiol, P, B, Si, Se/Te — match **0 of 11,329** (`src/cluster_survivors.py`).
 
 Validation: an independent 200-molecule random sample predicted 7.5% / 20.0% /
 72.5% before the census ran, against the census's 9.1% / 18.9% / 72.0% — inside

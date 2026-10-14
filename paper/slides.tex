@@ -9,13 +9,14 @@
 \setbeamertemplate{footline}{\hfill\insertframenumber/\inserttotalframenumber\hspace{1em}\vspace{0.5em}}
 \setbeamertemplate{itemize items}[circle]
 
-\newcommand{\fig}[2]{\IfFileExists{figs/#1}{\includegraphics[height=#2]{figs/#1}}%
+\newcommand{\fig}[2]{\IfFileExists{figs/#1}{\includegraphics[width=\linewidth,height=#2,keepaspectratio]{figs/#1}}%
   {\fbox{\parbox[c][#2][c]{0.8\linewidth}{\centering\small missing figs/#1}}}}
 \newcommand{\REPOURL}{github.com/JSR996/bbb-gnn-permeability}
 
 \title{Reusing a BBB Classifier as a GRPO Reward}
 \subtitle{How the loop collapses, why, and what restrains it}
-\author{[Authors -- fill in]}
+\author{S Hariharan, J Shrenik Reddy, Ansa N\\
+{\small\texttt{\{524cs0005, 124cs006, 124cs0077\}@iiitk.ac.in}}}
 \institute{RECOMB 2027}
 \date{}
 

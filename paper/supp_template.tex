@@ -20,7 +20,7 @@
 \begin{document}
 \sloppy
 \maketitle
-\noindent All tables below support the main paper. Code, result tables and run histories: \REPO{} (branch \texttt{ranking-v2}, commit \texttt{0d1e4e85}; this document's sources are in \path{paper/}). Tables S1, S5, S6, S7 and S10 are generated directly from the repository's CSV/JSON files by \texttt{make\_supp.py}; the others are copied from the repository's documentation (\path{documentation/*.md}) at the same commit.
+\noindent All tables below support the main paper. Code, result tables and run histories: \REPO{} (branch \texttt{main}, tag \texttt{recomb2027-final}; this document's sources are in \path{paper/}). Tables S1, S5, S6, S7 and S10 are generated directly from the repository's CSV/JSON files by \texttt{make\_supp.py}; the others are copied from the repository's documentation (\path{documentation/*.md}) at the same commit.
 
 \section{Classifier}
 \begin{table}[!htbp]\centering\small
@@ -138,7 +138,7 @@ window & scaffold & unique & $C$ & reward & sanitization\\\midrule
 
 \FloatBarrier
 \section{Reproduction}
-From a fresh clone of branch \texttt{ranking-v2} (see \texttt{CLAUDE.md} and \texttt{documentation/full\_pipeline.md}):
+From a fresh clone of the repository (branch \texttt{main}; see \texttt{CLAUDE.md} and \texttt{documentation/full\_pipeline.md}):
 \begin{verbatim}
 pip install -r requirements.txt     # requirements.lock pins versions
 python -m src.pipeline --list       # what would run / skip

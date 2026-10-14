@@ -23,6 +23,12 @@ kept separate so the core comparison stays clean:
 > The hybrid family **does** use hand-crafted descriptors. The "no descriptors"
 > statement applies to the base and edge families only.
 
+> **Paper.** This repository accompanies the RECOMB 2027 submission *Group-Relative
+> Reinforcement Learning for Blood-Brain-Barrier Molecule Design: What Restrains
+> Reward Hacking, and What Does Not*. The paper, its supplement, every figure and
+> the scripts that regenerate them are in [`paper/`](paper/). Everything reported
+> there is reproduced by `python -m src.pipeline` (see "Running" below).
+
 > **The pipeline and the evidence for every part of it:**
 > [`documentation/pipeline.md`](documentation/pipeline.md).
 
@@ -36,11 +42,11 @@ tables, with PR-AUC / balanced accuracy / F1 / MCC, are in
 
 | family (best member) | BBBP | B3DB |
 |---|---|---|
-| descriptor baseline (LightGBM) | 0.881 ± 0.039 | 0.853 ± 0.041 |
+| descriptor baseline (LightGBM, 8 descriptors) | 0.881 ± 0.039 | 0.852 ± 0.040 |
 | base GNN (best of GCN/SAGE/GIN/GAT) | 0.895 ± 0.038 (GCN) | 0.893 ± 0.051 (SAGE) |
 | edge ablation (best of 3) | 0.893 ± 0.031 (SAGE-edge) | 0.889 ± 0.052 (SAGE-edge) |
 | hybrid GNN + descriptors | 0.909 ± 0.029 (GAT) | 0.900 ± 0.052 (SAGE) |
-| hybrid + BatchNorm (best overall) | **0.921 ± 0.025** (GCN) | **0.905 ± 0.044** (GIN) |
+| hybrid + BatchNorm (best overall) | **0.921 ± 0.032** (GCN) | **0.905 ± 0.047** (GIN) |
 
 How to read this:
 
